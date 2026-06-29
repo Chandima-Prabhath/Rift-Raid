@@ -1,9 +1,13 @@
 /**
  * Rift & Raid — Network protocol
  *
- * Message schemas for client↔server communication. Phase 0 stub — Colyseus
- * integration will replace these with @colyseus/schema decorators in Phase 2.
+ * Message schemas for client↔server communication + Colyseus state schemas.
+ *
+ * Phase 2: Colyseus integration. The Schemas.ts file defines the @colyseus/schema
+ * decorated classes that the server broadcasts to all clients each tick.
  */
+
+export * from './Schemas.js';
 
 import type {
   CharacterClass,

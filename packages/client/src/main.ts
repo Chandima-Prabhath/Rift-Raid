@@ -1,16 +1,15 @@
 /**
- * Rift & Raid — Client entry point (Phase 1 prototype)
+ * Rift & Raid — Client entry point (Phase 2 prototype)
  *
- * Boots the engine and renders a playable combat prototype:
- *   - WASD/arrows to move, mouse to aim, click to attack, Space to dash
- *   - 1/2/3 keys to swap between Warrior / Ranger / Mage
- *   - 3 training dummies that take damage, die, and respawn
- *   - Floating damage numbers
- *   - HP bars above all entities
- *   - AoV-style fixed angled camera that follows the player
+ * Multiplayer skeleton with Colyseus:
+ *   - Connects to ws://localhost:2567/rift-raid room
+ *   - Local player spawns when connection is established
+ *   - Remote players spawn when their state arrives from server
+ *   - Movement + dash + class swap are sent to server (server-authoritative)
+ *   - Chat (press Enter to type, broadcast to room)
  *
- * Phase 1 success criteria (per GDD §10):
- *   "Character moves smoothly on PC + mobile, attack hits dummy"
+ * Phase 2 success criteria (per GDD §10):
+ *   "2 friends in different rooms see each other in real-time"
  */
 
 import * as THREE from 'three';
@@ -41,14 +40,11 @@ import {
 import { loadAllContent } from '@rift-and-raid/game';
 import {
   // Prefabs
-  createPlayer,
   createDummy,
   // Components
   PlayerComponent,
-  CombatTargetComponent,
   DummyComponent,
   ProjectileComponent,
-  HealthBarComponent,
   // Systems
   MovementSystem,
   CombatSystem,
@@ -59,11 +55,27 @@ import {
   HealthBarSystem,
   ClassSelectSystem,
 } from '@rift-and-raid/game';
-import { CLASS_STATS, WORLD_SIZE, type CharacterClass } from '@rift-and-raid/shared';
+import {
+  WORLD_SIZE,
+  CLASS_STATS,
+  type CharacterClass,
+} from '@rift-and-raid/shared';
+import { NetworkSystem } from './NetworkSystem.js';
+import { ChatUI } from './ChatUI.js';
 
 // ── Bootstrap ──────────────────────────────────────────────────────────────
 
 const boot = document.getElementById('boot')!;
+
+// Default to localhost; override via ?server= query param for remote play.
+const SERVER_URL = new URLSearchParams(window.location.search).get('server')
+  ?? 'ws://localhost:2567';
+
+const COLOR_BY_CLASS: Record<CharacterClass, number> = {
+  warrior: 0xd97742,
+  ranger: 0x60a060,
+  mage: 0x9050c0,
+};
 
 async function main() {
   // 1. Engine kernel
@@ -81,7 +93,7 @@ async function main() {
   const modelRenderer = new ModelRenderer(materialSystem);
   const cameraController = new CameraController(sceneManager);
 
-  // 4. Ground + base markers + decorative crystals (from Phase 0)
+  // 4. Ground + base markers
   const ground = modelRenderer.createGround(WORLD_SIZE.width, WORLD_SIZE.depth, Palette.grass);
   ground.position.z = -WORLD_SIZE.depth / 2;
   sceneManager.scene.add(ground);
@@ -94,19 +106,7 @@ async function main() {
   lunariBase.position.set(80, 0.1, -40);
   sceneManager.scene.add(lunariBase);
 
-  // 5. Player entity
-  const playerEntity = createPlayer(world, {
-    class: 'warrior',
-    faction: 'solari',
-    position: { x: 0, y: 0, z: -20 },
-  });
-  const playerMesh = modelRenderer.createCapsule(Palette.solariPrimary);
-  const playerTransform = world.getComponent(playerEntity, TransformComponent)!;
-  playerMesh.position.set(playerTransform.x, playerTransform.y, playerTransform.z);
-  sceneManager.attachObject(playerEntity, playerMesh);
-  cameraController.follow(playerEntity);
-
-  // 6. Dummies — cluster of 3 in front of player
+  // 5. Dummies (still local-only in Phase 2; Phase 4+ adds them to server)
   const dummyPositions = [
     { x: 0, y: 0, z: -35 },
     { x: -4, y: 0, z: -32 },
@@ -119,7 +119,7 @@ async function main() {
     sceneManager.attachObject(dummyEntity, dummyMesh);
   }
 
-  // 7. Input
+  // 6. Input
   const inputManager = new InputManager();
   const keyboardMouse = new KeyboardMouse();
   const virtualJoystick = new VirtualJoystick();
@@ -127,32 +127,88 @@ async function main() {
   inputManager.addAdapter(virtualJoystick);
   inputManager.attach();
 
-  // 8. HUD
+  // 7. HUD
   const hud = new HUD();
 
-  // 9. Systems
-  // Track projectile visual meshes for cleanup.
+  // 8. Chat UI
+  let chatUI: ChatUI | null = null;
+
+  // 9. Track meshes for remote players (entity → mesh).
+  const playerMeshes = new Map<number, THREE.Group>();
   const projectileMeshes = new Map<number, THREE.Mesh>();
 
+  // 10. Network system
+  const network = new NetworkSystem(
+    world,
+    SERVER_URL,
+    () => inputManager.getState(),
+    {
+      onPlayerSpawn: (entity, _sessionId, isLocal, color) => {
+        const mesh = modelRenderer.createCapsule(color);
+        const transform = world.getComponent(entity, TransformComponent);
+        if (transform) {
+          mesh.position.set(transform.x, transform.y, transform.z);
+        }
+        sceneManager.attachObject(entity, mesh);
+        playerMeshes.set(entity, mesh);
+
+        // Camera follows the local player.
+        if (isLocal) {
+          cameraController.follow(entity);
+          console.log(`[Client] Local player entity ${entity}, camera following`);
+        }
+      },
+      onPlayerUpdate: (entity, x, y, z, rotation, _color) => {
+        const mesh = playerMeshes.get(entity) ?? sceneManager.getObject(entity) as THREE.Group | undefined;
+        if (mesh) {
+          mesh.position.set(x, y, z);
+          mesh.rotation.y = rotation;
+        }
+      },
+      onPlayerLeave: (entity, _sessionId) => {
+        sceneManager.detachObject(entity);
+        playerMeshes.delete(entity);
+      },
+      onChat: (payload) => {
+        chatUI?.addMessage(payload);
+      },
+      onConnectionStateChange: (state) => {
+        console.log(`[Client] Network: ${state}`);
+        if (state === 'error') {
+          boot.innerHTML = `<div style="color:#f44;padding:20px;font-family:sans-serif;">
+            <h2>Cannot connect to server</h2>
+            <p>Make sure the server is running: <code>bun run dev:server</code></p>
+            <p>Server URL: <code>${SERVER_URL}</code></p>
+            <p>You can override with <code>?server=ws://your-host:2567</code></p>
+          </div>`;
+        }
+      },
+    }
+  );
+
+  chatUI = new ChatUI((text) => network.sendChat(text));
+
+  // 11. Systems
   const systems = [
     new ClassSelectSystem(content, {
       onClassChange: (entity, newClass, color) => {
         const mesh = sceneManager.getObject(entity);
-        if (!mesh) return;
-        // Swap capsule color by replacing material.
-        mesh.traverse((child) => {
-          const m = child as THREE.Mesh;
-          if (m.geometry instanceof THREE.CapsuleGeometry) {
-            m.material = materialSystem.flat(color);
-          }
-        });
+        if (mesh) {
+          mesh.traverse((child) => {
+            const m = child as THREE.Mesh;
+            if (m.geometry instanceof THREE.CapsuleGeometry) {
+              m.material = materialSystem.flat(color);
+            }
+          });
+        }
+        // Notify server about the class swap.
+        network.sendClassSwap(newClass);
         const stats = CLASS_STATS[newClass];
         console.log(`[Class] swapped to ${newClass} (HP ${stats.hp}, speed ${stats.moveSpeed})`);
       },
     }),
     new MovementSystem(() => inputManager.getState()),
     new CombatSystem(content, () => inputManager.getState(), (entity, proj) => {
-      // Create projectile visual.
       const geo = new THREE.SphereGeometry(proj.radius, 8, 6);
       const mat = new THREE.MeshBasicMaterial({ color: proj.color });
       const mesh = new THREE.Mesh(geo, mat);
@@ -162,7 +218,7 @@ async function main() {
       projectileMeshes.set(entity, mesh);
     }),
     new ProjectileSystem({
-      onSpawn: () => { /* mesh created in CombatSystem callback above */ },
+      onSpawn: () => {},
       onDestroy: (entity) => {
         const mesh = projectileMeshes.get(entity);
         if (mesh) {
@@ -173,7 +229,6 @@ async function main() {
         }
       },
       onHit: (_proj, target, _dmg) => {
-        // Visual feedback: scale pulse on target.
         const mesh = sceneManager.getObject(target);
         if (mesh) {
           mesh.scale.set(1.2, 1.2, 1.2);
@@ -186,11 +241,7 @@ async function main() {
       onPlayerRespawn: (entity) => console.log(`[Player] ${entity} respawned`),
       onDummyDeath: (entity) => {
         const mesh = sceneManager.getObject(entity);
-        if (mesh) {
-          // Hide mesh on death (DummySystem will show it again on respawn).
-          mesh.visible = false;
-        }
-        console.log(`[Dummy] ${entity} destroyed — respawning in 3s`);
+        if (mesh) mesh.visible = false;
       },
     }),
     new DummySystem({
@@ -210,7 +261,7 @@ async function main() {
 
   for (const sys of systems) sys.init?.(world);
 
-  // 10. Mouse aim world projection (called every frame)
+  // 12. Mouse aim world projection
   let mouseNDC = { x: 0, y: 0 };
   window.addEventListener('mousemove', (e) => {
     mouseNDC.x = (e.clientX / window.innerWidth) * 2 - 1;
@@ -219,34 +270,49 @@ async function main() {
 
   function updateAimWorld() {
     const ray = new THREE.Raycaster();
-    ray.setFromCamera(mouseNDC, sceneManager.camera);
+    const ndc = new THREE.Vector2(mouseNDC.x, mouseNDC.y);
+    ray.setFromCamera(ndc, sceneManager.camera);
     const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
     const point = new THREE.Vector3();
     if (ray.ray.intersectPlane(plane, point)) {
       keyboardMouse.setAimWorld(point.x, point.z);
-      virtualJoystick.setAimWorld(playerTransform.x, playerTransform.z);
+      // Virtual joystick aim defaults to local player position; updated below.
+      const localEntity = network.localPlayerEntity;
+      if (localEntity) {
+        const t = world.getComponent(localEntity, TransformComponent);
+        if (t) virtualJoystick.setAimWorld(t.x, t.z);
+      }
     }
   }
 
-  // 11. Game loop
+  // 13. Game loop
   const loop = new GameLoop({
     update: (dt) => {
-      // Update input (refreshes edge-triggered flags).
       inputManager.update(dt);
-
-      // Update mouse aim world position.
       updateAimWorld();
 
-      // Run all gameplay systems.
+      // Update local-player-aim for network input.
+      // (MovementSystem reads input and updates local transform; that transform
+      // is then sent to server by NetworkSystem.update.)
+
+      // Run gameplay systems.
       for (const sys of systems) {
         sys.update(world, dt);
       }
 
-      // Sync player mesh to ECS transform.
-      const playerMesh3d = sceneManager.getObject(playerEntity);
-      if (playerMesh3d) {
-        playerMesh3d.position.set(playerTransform.x, playerTransform.y, playerTransform.z);
-        playerMesh3d.rotation.y = playerTransform.rotation;
+      // Run network system (sends input, applies remote state).
+      network.update(dt);
+
+      // Sync player meshes to ECS transforms (for local player; remote players
+      // are updated directly by NetworkSystem.onPlayerUpdate).
+      const localEntity = network.localPlayerEntity;
+      if (localEntity !== null) {
+        const t = world.getComponent(localEntity, TransformComponent);
+        const mesh = playerMeshes.get(localEntity);
+        if (t && mesh) {
+          mesh.position.set(t.x, t.y, t.z);
+          mesh.rotation.y = t.rotation;
+        }
       }
 
       // Sync dummy meshes.
@@ -270,21 +336,23 @@ async function main() {
       }
 
       // HUD update.
-      const playerHealth = world.getComponent(playerEntity, HealthComponent);
-      const player = world.getComponent(playerEntity, PlayerComponent);
-      if (playerHealth && player) {
-        hud.setStats({
-          fps: loop.fps,
-          tickRate: loop.tickRate,
-          entityCount: world.entityCount,
-          playerHp: playerHealth.current,
-          playerMaxHp: playerHealth.max,
-          playerResources: {
-            iron: player.inventory.iron,
-            emberwood: player.inventory.emberwood,
-            godshard: player.inventory.godshard,
-          },
-        });
+      if (localEntity !== null) {
+        const playerHealth = world.getComponent(localEntity, HealthComponent);
+        const player = world.getComponent(localEntity, PlayerComponent);
+        if (playerHealth && player) {
+          hud.setStats({
+            fps: loop.fps,
+            tickRate: loop.tickRate,
+            entityCount: world.entityCount,
+            playerHp: playerHealth.current,
+            playerMaxHp: playerHealth.max,
+            playerResources: {
+              iron: player.inventory.iron,
+              emberwood: player.inventory.emberwood,
+              godshard: player.inventory.godshard,
+            },
+          });
+        }
       }
 
       world.clearDirtyFlag();
@@ -298,16 +366,20 @@ async function main() {
 
   loop.start();
 
-  // Hide boot screen
-  setTimeout(() => {
+  // 14. Connect to server (async — happens after loop starts so the scene
+  // renders immediately and the boot screen fades).
+  console.log(`[Client] Connecting to ${SERVER_URL}...`);
+  network.connect().then(() => {
+    // Hide boot screen on successful connection.
     boot.classList.add('hidden');
     setTimeout(() => boot.remove(), 500);
-  }, 300);
+  }).catch((err) => {
+    console.error('[Client] Connection failed:', err);
+  });
 }
 
 /**
  * Project a world position to screen pixel coordinates.
- * Returns null if the point is behind the camera.
  */
 function projectToScreen(
   sceneManager: SceneManager,
@@ -317,7 +389,6 @@ function projectToScreen(
 ): { x: number; y: number; visible: boolean } | null {
   const v = new THREE.Vector3(x, y, z);
   v.project(sceneManager.camera);
-  // v.z is in NDC [-1, 1]; behind camera if z > 1.
   if (v.z > 1) return { x: 0, y: 0, visible: false };
   return {
     x: (v.x * 0.5 + 0.5) * window.innerWidth,

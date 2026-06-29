@@ -27,5 +27,8 @@
     "build": "tsc -b",
     "typecheck": "tsc --noEmit",
     "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@colyseus/schema": "^4.0.27"
   }
 }

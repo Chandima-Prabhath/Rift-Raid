@@ -1,19 +1,24 @@
 /**
  * Rift & Raid — Server entry point
  *
- * Boots the authoritative server. Phase 0 responsibilities:
+ * Boots the authoritative server. Phase 2 responsibilities:
  *   1. Load content registry (weapons, abilities, structures, monsters)
  *   2. Open SQLite persistence
  *   3. Load saved world state (or create default)
  *   4. Run offline simulation (catch up to now)
  *   5. Log summary
  *   6. Save updated state
- *   7. (Stub) start WebSocket listener — Phase 2 will integrate Colyseus
+ *   7. Start Colyseus server with GameRoom
  *   8. Set up auto-save (60s) and graceful shutdown (SIGINT/SIGTERM)
  */
 
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import http from 'node:http';
+import express from 'express';
+import { Server } from '@colyseus/core';
+import { WebSocketTransport } from '@colyseus/ws-transport';
+import { monitor } from '@colyseus/monitor';
 import {
   NETWORK,
   type PersistedWorldState,
@@ -28,9 +33,11 @@ import {
   simulateOffline,
   type WorldState,
 } from './world/index.js';
+import { GameRoom } from './rooms/GameRoom.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DB_PATH = path.resolve(__dirname, '../../../data/world.sqlite');
+const PORT = Number(process.env.PORT ?? NETWORK.defaultPort);
 
 async function main() {
   console.log('═══════════════════════════════════════════════════════');
@@ -61,7 +68,6 @@ async function main() {
   // ── 4. Offline simulation ─────────────────────────────────────────────
   console.log('[OfflineSim] Running catch-up...');
   const result = simulateOffline(toPersisted(world), now);
-  // Re-sync world.lastTickTimestamp (simulateOffline mutates the persisted copy).
   world.lastTickTimestamp = now;
   console.log(`[OfflineSim] ${result.summary}`);
   console.log(
@@ -73,9 +79,25 @@ async function main() {
   persistence.save(toPersisted(world));
   console.log('[Persistence] Saved post-simulation state');
 
-  // ── 6. Network (Phase 0 stub — real Colyseus integration in Phase 2) ──
-  const port = NETWORK.defaultPort;
-  console.log(`[Network] Phase 0 stub — Colyseus integration pending (would listen on :${port})`);
+  // ── 6. Start Colyseus server ──────────────────────────────────────────
+  const app = express();
+  const httpServer = http.createServer(app);
+
+  // Mount the Colyseus monitor at /colyseus for debug UI.
+  app.use('/colyseus', monitor());
+
+  const gameServer = new Server({
+    transport: new WebSocketTransport({ server: httpServer }),
+  });
+
+  // Define the room — clients join at /rift-raid.
+  gameServer.define('rift-raid', GameRoom);
+
+  httpServer.listen(PORT, () => {
+    console.log(`[Network] Colyseus server listening on http://localhost:${PORT}`);
+    console.log(`[Network] Room endpoint: ws://localhost:${PORT}/rift-raid`);
+    console.log(`[Network] Monitor: http://localhost:${PORT}/colyseus`);
+  });
 
   // ── 7. Auto-save loop ─────────────────────────────────────────────────
   const AUTO_SAVE_INTERVAL_MS = 60_000;
@@ -95,23 +117,16 @@ async function main() {
     world.lastTickTimestamp = Date.now();
     persistence.save(toPersisted(world));
     persistence.close();
+    httpServer.close();
     console.log('[Shutdown] State saved. Goodbye.');
     process.exit(0);
   };
   process.on('SIGINT', () => shutdown('SIGINT'));
   process.on('SIGTERM', () => shutdown('SIGTERM'));
 
-  // ── 9. Keep process alive ─────────────────────────────────────────────
   console.log('═══════════════════════════════════════════════════════');
   console.log('  Server ready. Press Ctrl+C to shut down.');
   console.log('═══════════════════════════════════════════════════════');
-
-  // Phase 0: keep process alive via a long-running interval.
-  // Phase 2 will replace this with `server.listen()`.
-  const keepAlive = setInterval(() => {
-    /* no-op */
-  }, 60_000);
-  keepAlive.unref?.();
 }
 
 main().catch((err) => {
