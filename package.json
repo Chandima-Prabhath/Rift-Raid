@@ -30,17 +30,17 @@
     "clean": "rm -rf packages/*/dist packages/*/node_modules node_modules"
   },
   "devDependencies": {
-    "@colyseus/core": "^0.15.57",
-    "@colyseus/monitor": "^0.15.0",
-    "@colyseus/schema": "^2.0.4",
+    "@colyseus/core": "0.15.57",
+    "@colyseus/monitor": "0.15.8",
+    "@colyseus/schema": "2.0.9",
     "@colyseus/tools": "^0.17.19",
     "concurrently": "^9.1.0",
     "typescript": "^5.6.3"
   },
   "dependencies": {
-    "@colyseus/ws-transport": "^0.15.0",
+    "@colyseus/ws-transport": "0.15.3",
     "@types/express": "^5.0.6",
-    "colyseus.js": "^0.15.0",
+    "colyseus.js": "0.15.28",
     "express": "^5.2.1",
     "ws": "^8.21.0"
   }

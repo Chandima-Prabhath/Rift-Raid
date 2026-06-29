@@ -82,6 +82,40 @@ export const COMBAT = {
   stealCapFraction: 0.3,
   /** Cooldown between raids. */
   raidCooldownMs: 5 * 60 * 1000, // 5 min
+  /** Respawn delay after death (ms). */
+  respawnDelayMs: 5000,
+  /** Melee attack arc half-angle (radians). ±60° = 120° arc. */
+  meleeArcHalfAngle: (60 * Math.PI) / 180,
+  /** Projectile collision radius (sphere check). */
+  projectileRadius: 0.4,
+  /** Player collision radius (for projectile hits). */
+  playerRadius: 0.6,
+  /** Slow multiplier when slowed (e.g. by Frost Nova). */
+  slowMultiplier: 0.5,
+} as const;
+
+export const ABILITIES = {
+  charge: {
+    name: 'Charge',
+    cooldownMs: 6000,
+    distance: 6,
+    damage: 15,
+    radius: 1.5,
+  },
+  volley: {
+    name: 'Volley',
+    cooldownMs: 8000,
+    damage: 12,
+    projectileCount: 3,
+    spreadAngle: (30 * Math.PI) / 180, // ±30° cone
+  },
+  frost_nova: {
+    name: 'Frost Nova',
+    cooldownMs: 10000,
+    radius: 5,
+    damage: 10,
+    slowMs: 2000,
+  },
 } as const;
 
 // ============================================================================

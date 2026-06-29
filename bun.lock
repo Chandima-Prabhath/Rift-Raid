@@ -5,16 +5,16 @@
     "": {
       "name": "rift-and-raid",
       "dependencies": {
-        "@colyseus/ws-transport": "^0.15.0",
+        "@colyseus/ws-transport": "0.15.3",
         "@types/express": "^5.0.6",
-        "colyseus.js": "^0.15.0",
+        "colyseus.js": "0.15.28",
         "express": "^5.2.1",
         "ws": "^8.21.0",
       },
       "devDependencies": {
-        "@colyseus/core": "^0.15.57",
-        "@colyseus/monitor": "^0.15.0",
-        "@colyseus/schema": "^2.0.4",
+        "@colyseus/core": "0.15.57",
+        "@colyseus/monitor": "0.15.8",
+        "@colyseus/schema": "2.0.9",
         "@colyseus/tools": "^0.17.19",
         "concurrently": "^9.1.0",
         "typescript": "^5.6.3",
@@ -86,7 +86,7 @@
 
     "@colyseus/monitor": ["@colyseus/monitor@0.15.8", "", { "dependencies": { "express": "^4.16.2", "node-os-utils": "^1.2.0" } }, "sha512-+ObH0AsPoC+Co8eZczAHr6VMiM/AmLyNNOpOPMRLMI7/C4apO4IdPhJdU9ZqArgxHYYaSICWymmQWokVhoj60Q=="],
 
-    "@colyseus/schema": ["@colyseus/schema@2.0.37", "", { "bin": { "schema-codegen": "bin/schema-codegen" } }, "sha512-+WXEux9DMSaTz9hZKabl6LBuzsxzt9EvOwhXJ/G4rPCaaVkJ+iLxRsq8VbL2ZCx18E/uQH6nLaNIQVqH9wEt8w=="],
+    "@colyseus/schema": ["@colyseus/schema@2.0.9", "", { "bin": { "schema-codegen": "bin/schema-codegen" } }, "sha512-YuIs9oPuVAFAvjEtNFLDdZ4yiRi3d0DfGkeDDrMKFqaI8G4G/MnVb+zHIWN21QeSru+urzqZnZoVV+gHKHNK0w=="],
 
     "@colyseus/tools": ["@colyseus/tools@0.17.19", "", { "dependencies": { "@pm2/io": "^6.0.1", "dotenv": ">=14.1.0" }, "peerDependencies": { "@colyseus/core": "0.17.x", "@colyseus/ws-transport": "0.17.x" }, "bin": { "colyseus-post-deploy": "post-deploy.cjs", "colyseus-system-boot": "system-boot.cjs", "colyseus-report-stats": "report-stats.cjs" } }, "sha512-2vPso8O6GsIiQqrvPzRIsXth2inET0hrN/geZSB65/I0XbB3pN4EGRU/gD/9NnQSuV6D6suPIQhhjzHCACDKRw=="],
 

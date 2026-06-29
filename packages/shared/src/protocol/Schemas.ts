@@ -1,14 +1,11 @@
 /**
  * Rift & Raid — Network schemas (Colyseus @colyseus/schema v2)
  *
- * These define the shape of state that the server broadcasts to all clients
- * every tick. Colyseus automatically tracks changes and sends only diffs
- * over the wire — extremely efficient for small games like ours.
+ * Uses defineTypes() instead of @type decorators to avoid Bun's
+ * decorator compatibility issues.
  *
- * IMPORTANT: Do NOT use class field initializers (e.g. `name = 'Player'`)
- * on Schema subclasses. The @type/defineTypes machinery defines
- * getters/setters on the prototype, and field initializers overwrite them.
- * Set defaults in the constructor instead.
+ * IMPORTANT: tsconfig must have useDefineForClassFields: false to prevent
+ * class field declarations from overwriting the schema's getters/setters.
  */
 
 import { Schema, MapSchema, defineTypes } from '@colyseus/schema';
@@ -30,6 +27,11 @@ export class PlayerState extends Schema {
   alive!: boolean;
   sequence!: number;
   color!: number;
+  diedAt!: number;
+  lastAttackAt!: number;
+  lastAbilityAt!: number;
+  abilityId!: string;
+  slowMs!: number;
 
   constructor() {
     super();
@@ -45,6 +47,11 @@ export class PlayerState extends Schema {
     this.alive = true;
     this.sequence = 0;
     this.color = 0xd97742;
+    this.diedAt = 0;
+    this.lastAttackAt = 0;
+    this.lastAbilityAt = 0;
+    this.abilityId = '';
+    this.slowMs = 0;
   }
 }
 
@@ -61,6 +68,67 @@ defineTypes(PlayerState, {
   alive: 'boolean',
   sequence: 'number',
   color: 'number',
+  diedAt: 'number',
+  lastAttackAt: 'number',
+  lastAbilityAt: 'number',
+  abilityId: 'string',
+  slowMs: 'number',
+});
+
+// ============================================================================
+// Projectile — server-authoritative in-flight attack
+// ============================================================================
+
+export class ProjectileState extends Schema {
+  id!: string;
+  ownerId!: string;
+  faction!: string;
+  damage!: number;
+  x!: number;
+  y!: number;
+  z!: number;
+  dx!: number;
+  dy!: number;
+  dz!: number;
+  speed!: number;
+  lifetimeMs!: number;
+  color!: number;
+  pierce!: boolean;
+
+  constructor() {
+    super();
+    this.id = '';
+    this.ownerId = '';
+    this.faction = 'neutral';
+    this.damage = 10;
+    this.x = 0;
+    this.y = 1.2;
+    this.z = 0;
+    this.dx = 0;
+    this.dy = 0;
+    this.dz = 1;
+    this.speed = 25;
+    this.lifetimeMs = 2000;
+    this.color = 0xffe060;
+    this.pierce = false;
+  }
+}
+
+defineTypes(ProjectileState, {
+  id: 'string',
+  ownerId: 'string',
+  faction: 'string',
+  damage: 'number',
+  x: 'number',
+  y: 'number',
+  z: 'number',
+  dx: 'number',
+  dy: 'number',
+  dz: 'number',
+  speed: 'number',
+  lifetimeMs: 'number',
+  color: 'number',
+  pierce: 'boolean',
 });
 
 // ============================================================================
@@ -75,17 +143,19 @@ export interface ChatMessagePayload {
 }
 
 // ============================================================================
-// GameState — root schema, holds all players + room metadata
+// GameState — root schema
 // ============================================================================
 
 export class GameState extends Schema {
   players!: MapSchema<PlayerState>;
+  projectiles!: MapSchema<ProjectileState>;
   tick!: number;
   worldTime!: number;
 
   constructor() {
     super();
     this.players = new MapSchema();
+    this.projectiles = new MapSchema();
     this.tick = 0;
     this.worldTime = 0;
   }
@@ -93,6 +163,7 @@ export class GameState extends Schema {
 
 defineTypes(GameState, {
   players: { map: PlayerState },
+  projectiles: { map: ProjectileState },
   tick: 'number',
   worldTime: 'number',
 });

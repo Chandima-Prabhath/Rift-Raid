@@ -1,51 +1,42 @@
 /**
- * Rift & Raid — Client entry point (Phase 2 prototype)
+ * Rift & Raid — Client entry point (Phase 3 prototype)
  *
- * Multiplayer skeleton with Colyseus:
- *   - Connects to ws://localhost:2567/rift-raid room
- *   - Local player spawns when connection is established
- *   - Remote players spawn when their state arrives from server
- *   - Movement + dash + class swap are sent to server (server-authoritative)
- *   - Chat (press Enter to type, broadcast to room)
+ * Networked combat + abilities:
+ *   - Attacks + abilities sent to server (server-authoritative)
+ *   - Projectiles spawned from server state (not locally)
+ *   - Death overlay shows when killed, respawn timer counts down
+ *   - Kill feed shows recent kills
+ *   - Dummies still local-only (Phase 4 moves them to server)
  *
- * Phase 2 success criteria (per GDD §10):
- *   "2 friends in different rooms see each other in real-time"
+ * Phase 3 success criteria (per GDD §10):
+ *   "Can kill each other, abilities fire on cooldown, respawns work"
  */
 
 import * as THREE from 'three';
 import {
-  // Core
   World,
   GameLoop,
   EventBus,
   Events,
-  // Renderer
   SceneManager,
   CameraController,
   MaterialSystem,
   ModelRenderer,
   Palette,
-  // Assets
   ContentRegistry,
-  // Input
   InputManager,
   KeyboardMouse,
   VirtualJoystick,
-  // Engine components
   TransformComponent,
   HealthComponent,
-  // UI
   HUD,
 } from '@rift-and-raid/engine';
 import { loadAllContent } from '@rift-and-raid/game';
 import {
-  // Prefabs
   createDummy,
-  // Components
   PlayerComponent,
   DummyComponent,
   ProjectileComponent,
-  // Systems
   MovementSystem,
   CombatSystem,
   ProjectileSystem,
@@ -58,16 +49,15 @@ import {
 import {
   WORLD_SIZE,
   CLASS_STATS,
+  COMBAT,
   type CharacterClass,
 } from '@rift-and-raid/shared';
 import { NetworkSystem } from './NetworkSystem.js';
 import { ChatUI } from './ChatUI.js';
-
-// ── Bootstrap ──────────────────────────────────────────────────────────────
+import { DeathOverlay } from './DeathOverlay.js';
+import { KillFeed } from './KillFeed.js';
 
 const boot = document.getElementById('boot')!;
-
-// Default to localhost; override via ?server= query param for remote play.
 const SERVER_URL = new URLSearchParams(window.location.search).get('server')
   ?? 'ws://localhost:2567';
 
@@ -106,7 +96,7 @@ async function main() {
   lunariBase.position.set(80, 0.1, -40);
   sceneManager.scene.add(lunariBase);
 
-  // 5. Dummies (still local-only in Phase 2; Phase 4+ adds them to server)
+  // 5. Dummies (local-only in Phase 3)
   const dummyPositions = [
     { x: 0, y: 0, z: -35 },
     { x: -4, y: 0, z: -32 },
@@ -127,17 +117,18 @@ async function main() {
   inputManager.addAdapter(virtualJoystick);
   inputManager.attach();
 
-  // 7. HUD
+  // 7. HUD + chat + death overlay + kill feed
   const hud = new HUD();
-
-  // 8. Chat UI
+  const deathOverlay = new DeathOverlay();
+  const killFeed = new KillFeed();
   let chatUI: ChatUI | null = null;
 
-  // 9. Track meshes for remote players (entity → mesh).
+  // 8. Track meshes
   const playerMeshes = new Map<number, THREE.Group>();
-  const projectileMeshes = new Map<number, THREE.Mesh>();
+  const projectileMeshes = new Map<string, THREE.Mesh>();
+  const localProjectileMeshes = new Map<number, THREE.Mesh>(); // for local dummy combat
 
-  // 10. Network system
+  // 9. Network system
   const network = new NetworkSystem(
     world,
     SERVER_URL,
@@ -151,26 +142,49 @@ async function main() {
         }
         sceneManager.attachObject(entity, mesh);
         playerMeshes.set(entity, mesh);
-
-        // Camera follows the local player.
         if (isLocal) {
           cameraController.follow(entity);
           console.log(`[Client] Local player entity ${entity}, camera following`);
         }
       },
-      onPlayerUpdate: (entity, x, y, z, rotation, _color) => {
-        const mesh = playerMeshes.get(entity) ?? sceneManager.getObject(entity) as THREE.Group | undefined;
+      onPlayerUpdate: (entity, x, y, z, rotation, _color, alive, _hp, _maxHp) => {
+        const mesh = playerMeshes.get(entity);
         if (mesh) {
           mesh.position.set(x, y, z);
           mesh.rotation.y = rotation;
+          mesh.visible = alive;
         }
       },
       onPlayerLeave: (entity, _sessionId) => {
         sceneManager.detachObject(entity);
         playerMeshes.delete(entity);
       },
+      onProjectileSpawn: (projId, x, y, z, color) => {
+        const geo = new THREE.SphereGeometry(0.3, 8, 6);
+        const mat = new THREE.MeshBasicMaterial({ color });
+        const mesh = new THREE.Mesh(geo, mat);
+        mesh.position.set(x, y, z);
+        sceneManager.scene.add(mesh);
+        projectileMeshes.set(projId, mesh);
+      },
+      onProjectileUpdate: (projId, x, y, z) => {
+        const mesh = projectileMeshes.get(projId);
+        if (mesh) mesh.position.set(x, y, z);
+      },
+      onProjectileDestroy: (projId) => {
+        const mesh = projectileMeshes.get(projId);
+        if (mesh) {
+          sceneManager.scene.remove(mesh);
+          mesh.geometry.dispose();
+          (mesh.material as THREE.Material).dispose();
+          projectileMeshes.delete(projId);
+        }
+      },
       onChat: (payload) => {
         chatUI?.addMessage(payload);
+      },
+      onKill: (victimName, killerName) => {
+        killFeed.addKill(victimName, killerName);
       },
       onConnectionStateChange: (state) => {
         console.log(`[Client] Network: ${state}`);
@@ -179,7 +193,7 @@ async function main() {
             <h2>Cannot connect to server</h2>
             <p>Make sure the server is running: <code>bun run dev:server</code></p>
             <p>Server URL: <code>${SERVER_URL}</code></p>
-            <p>You can override with <code>?server=ws://your-host:2567</code></p>
+            <p>Override with <code>?server=ws://your-host:2567</code></p>
           </div>`;
         }
       },
@@ -188,7 +202,8 @@ async function main() {
 
   chatUI = new ChatUI((text) => network.sendChat(text));
 
-  // 11. Systems
+  // 10. Systems — note: CombatSystem + ProjectileSystem only handle local
+  //     dummy combat now. PvP combat goes through the server.
   const systems = [
     new ClassSelectSystem(content, {
       onClassChange: (entity, newClass, color) => {
@@ -201,13 +216,13 @@ async function main() {
             }
           });
         }
-        // Notify server about the class swap.
         network.sendClassSwap(newClass);
         const stats = CLASS_STATS[newClass];
         console.log(`[Class] swapped to ${newClass} (HP ${stats.hp}, speed ${stats.moveSpeed})`);
       },
     }),
     new MovementSystem(() => inputManager.getState()),
+    // Local combat system — only for dummies (PvE). PvP is server-authoritative.
     new CombatSystem(content, () => inputManager.getState(), (entity, proj) => {
       const geo = new THREE.SphereGeometry(proj.radius, 8, 6);
       const mat = new THREE.MeshBasicMaterial({ color: proj.color });
@@ -215,17 +230,17 @@ async function main() {
       const t = world.getComponent(entity, TransformComponent);
       if (t) mesh.position.set(t.x, t.y, t.z);
       sceneManager.scene.add(mesh);
-      projectileMeshes.set(entity, mesh);
+      localProjectileMeshes.set(entity, mesh);
     }),
     new ProjectileSystem({
       onSpawn: () => {},
       onDestroy: (entity) => {
-        const mesh = projectileMeshes.get(entity);
+        const mesh = localProjectileMeshes.get(entity);
         if (mesh) {
           sceneManager.scene.remove(mesh);
           mesh.geometry.dispose();
           (mesh.material as THREE.Material).dispose();
-          projectileMeshes.delete(entity);
+          localProjectileMeshes.delete(entity);
         }
       },
       onHit: (_proj, target, _dmg) => {
@@ -237,8 +252,12 @@ async function main() {
       },
     }),
     new HealthSystem(eventBus, {
-      onPlayerDeath: (entity) => console.log(`[Player] ${entity} died — respawning`),
-      onPlayerRespawn: (entity) => console.log(`[Player] ${entity} respawned`),
+      onPlayerDeath: (entity) => {
+        // Local player death is handled by network state (server sets alive=false).
+        // The HealthSystem's local respawn logic is for dummies only.
+        console.log(`[Player] ${entity} died (local)`);
+      },
+      onPlayerRespawn: (entity) => console.log(`[Player] ${entity} respawned (local)`),
       onDummyDeath: (entity) => {
         const mesh = sceneManager.getObject(entity);
         if (mesh) mesh.visible = false;
@@ -261,7 +280,7 @@ async function main() {
 
   for (const sys of systems) sys.init?.(world);
 
-  // 12. Mouse aim world projection
+  // 11. Mouse aim
   let mouseNDC = { x: 0, y: 0 };
   window.addEventListener('mousemove', (e) => {
     mouseNDC.x = (e.clientX / window.innerWidth) * 2 - 1;
@@ -276,7 +295,6 @@ async function main() {
     const point = new THREE.Vector3();
     if (ray.ray.intersectPlane(plane, point)) {
       keyboardMouse.setAimWorld(point.x, point.z);
-      // Virtual joystick aim defaults to local player position; updated below.
       const localEntity = network.localPlayerEntity;
       if (localEntity) {
         const t = world.getComponent(localEntity, TransformComponent);
@@ -285,26 +303,23 @@ async function main() {
     }
   }
 
+  // 12. Track previous alive state to detect death/respawn transitions
+  let wasLocalAlive = true;
+
   // 13. Game loop
   const loop = new GameLoop({
     update: (dt) => {
       inputManager.update(dt);
       updateAimWorld();
 
-      // Update local-player-aim for network input.
-      // (MovementSystem reads input and updates local transform; that transform
-      // is then sent to server by NetworkSystem.update.)
-
-      // Run gameplay systems.
       for (const sys of systems) {
         sys.update(world, dt);
       }
 
-      // Run network system (sends input, applies remote state).
       network.update(dt);
 
-      // Sync player meshes to ECS transforms (for local player; remote players
-      // are updated directly by NetworkSystem.onPlayerUpdate).
+      // Sync local player mesh (server is authoritative, but local movement
+      // system also runs for responsiveness — server corrects if needed).
       const localEntity = network.localPlayerEntity;
       if (localEntity !== null) {
         const t = world.getComponent(localEntity, TransformComponent);
@@ -313,6 +328,25 @@ async function main() {
           mesh.position.set(t.x, t.y, t.z);
           mesh.rotation.y = t.rotation;
         }
+
+        // Check death state for overlay.
+        const health = world.getComponent(localEntity, HealthComponent);
+        const playerState = network['room']?.state['players'].get(network['localSessionId']!);
+        if (playerState) {
+          if (!playerState.alive && wasLocalAlive) {
+            // Just died.
+            deathOverlay.show(COMBAT.respawnDelayMs, playerState.diedAt);
+            wasLocalAlive = false;
+          } else if (playerState.alive && !wasLocalAlive) {
+            // Respawned.
+            deathOverlay.hide();
+            wasLocalAlive = true;
+          } else if (!playerState.alive) {
+            // Still dead — update timer.
+            deathOverlay.updateTimer(COMBAT.respawnDelayMs, playerState.diedAt);
+          }
+        }
+        void health;
       }
 
       // Sync dummy meshes.
@@ -325,11 +359,11 @@ async function main() {
         }
       }
 
-      // Sync projectile meshes.
+      // Sync local projectile meshes (for dummy combat).
       const projectiles = world.query(ProjectileComponent, TransformComponent);
       for (const projEntity of projectiles) {
         const pt = world.getComponent(projEntity, TransformComponent);
-        const mesh = projectileMeshes.get(projEntity);
+        const mesh = localProjectileMeshes.get(projEntity);
         if (pt && mesh) {
           mesh.position.set(pt.x, pt.y, pt.z);
         }
@@ -366,11 +400,9 @@ async function main() {
 
   loop.start();
 
-  // 14. Connect to server (async — happens after loop starts so the scene
-  // renders immediately and the boot screen fades).
+  // 14. Connect to server
   console.log(`[Client] Connecting to ${SERVER_URL}...`);
   network.connect().then(() => {
-    // Hide boot screen on successful connection.
     boot.classList.add('hidden');
     setTimeout(() => boot.remove(), 500);
   }).catch((err) => {
@@ -378,9 +410,6 @@ async function main() {
   });
 }
 
-/**
- * Project a world position to screen pixel coordinates.
- */
 function projectToScreen(
   sceneManager: SceneManager,
   x: number,
