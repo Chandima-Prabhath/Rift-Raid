@@ -8,6 +8,10 @@ dist/
 build/
 **/build/
 
+# TypeScript build info
+*.tsbuildinfo
+**/*.tsbuildinfo
+
 # Source maps (keep .ts, drop generated .js.map in dist)
 **/dist/**/*.js.map
 

@@ -10,9 +10,6 @@
  *
  * Adding new content = adding a JSON file to packages/game/src/content/.
  * No code changes needed in this file (Node mode auto-discovers).
- *
- * This function is async because the Node path uses dynamic imports of
- * node:fs etc., which keeps those imports out of the browser bundle.
  */
 
 import type { ContentRegistry } from '@rift-and-raid/engine';
@@ -33,7 +30,6 @@ export async function loadAllContent(registry: ContentRegistry): Promise<void> {
     [ContentCategory, Array<{ raw: unknown; path: string }>]
   >) {
     const methodName = REGISTRY_METHODS[category];
-    // Bind to preserve `this` context.
     const register = (
       registry[methodName] as (raw: unknown, path?: string) => void
     ).bind(registry);
@@ -46,41 +42,49 @@ export async function loadAllContent(registry: ContentRegistry): Promise<void> {
 async function collectConfigs(): Promise<
   Record<ContentCategory, Array<{ raw: unknown; path: string }>>
 > {
-  // Vite browser path.
-  if (
-    typeof import.meta !== 'undefined' &&
-    typeof (import.meta as { glob?: unknown }).glob === 'function'
-  ) {
+  // Browser detection — Vite statically transforms import.meta.glob() calls
+  // but does NOT expose import.meta.glob as a runtime function reference.
+  // So we detect environment by checking for window.
+  if (typeof window !== 'undefined') {
     return collectVite();
   }
-  // Node path.
   return collectNode();
 }
 
+/**
+ * Vite browser path. The import.meta.glob call is statically analyzed by
+ * Vite at build time and replaced with the bundled JSON modules.
+ *
+ * NOTE: This call MUST appear as the literal pattern `import.meta.glob(...)`
+ * for Vite's static analyzer to pick it up. Typecasts can break it, so we
+ * cast the result instead of the call.
+ */
 function collectVite(): Record<ContentCategory, Array<{ raw: unknown; path: string }>> {
   const result = emptyResult();
-  const modules = (
-    import.meta as unknown as {
-      glob: (
-        pattern: string,
-        options: { eager: boolean; as: string }
-      ) => Record<string, { default: unknown }>;
-    }
-  ).glob('./content/**/*.json', { eager: true, as: 'json' });
+  // @ts-ignore — Vite injects import.meta.glob at build time; TS doesn't know about it.
+  const modules: Record<string, { default: unknown }> = import.meta.glob('./content/**/*.json', {
+    eager: true,
+    query: '?json',
+  });
   for (const [filePath, mod] of Object.entries(modules)) {
     const category = categorize(filePath);
     if (category) {
+      // `mod.default` is the parsed JSON object.
       result[category].push({ raw: mod.default, path: filePath });
     }
   }
   return result;
 }
 
+/**
+ * Node path. Uses dynamic imports of node:fs etc. to keep them out of the
+ * browser bundle (Vite tree-shakes this branch since it's only reachable
+ * when `typeof window === 'undefined'`).
+ */
 async function collectNode(): Promise<
   Record<ContentCategory, Array<{ raw: unknown; path: string }>>
 > {
   const result = emptyResult();
-  // Dynamic import keeps these out of the browser bundle.
   const fs = await import('node:fs');
   const path = await import('node:path');
   const url = await import('node:url');

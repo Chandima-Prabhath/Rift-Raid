@@ -1,0 +1,14 @@
+{
+  "id": "fire_staff",
+  "name": "Fire Staff",
+  "class": "mage",
+  "type": "ranged",
+  "damage": 25,
+  "cooldownMs": 1200,
+  "range": 15,
+  "special": "burn_dot",
+  "cost": { "iron": 8, "emberwood": 5 },
+  "model": "weapons/fire_staff.glb",
+  "icon": "weapons/fire_staff.png",
+  "version": 1
+}

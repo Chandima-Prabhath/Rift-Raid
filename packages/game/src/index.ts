@@ -7,3 +7,5 @@
  */
 
 export { loadAllContent } from './loadContent.js';
+export * from './prefabs/index.js';
+export * from './systems/index.js';

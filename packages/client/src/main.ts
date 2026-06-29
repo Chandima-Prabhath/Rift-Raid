@@ -1,100 +1,125 @@
 /**
- * Rift & Raid — Client entry point (Phase 0 prototype)
+ * Rift & Raid — Client entry point (Phase 1 prototype)
  *
- * Boots the engine and renders a basic scene with a movable capsule that
- * the camera follows. Demonstrates:
- *   - ECS world with player entity (Transform + Velocity + Health + Faction)
- *   - GameLoop running at 60Hz fixed timestep
- *   - SceneManager rendering Three.js scene
- *   - CameraController following the player
- *   - InputManager dispatching to KeyboardMouse + VirtualJoystick
- *   - HUD overlay showing FPS, HP, resources
+ * Boots the engine and renders a playable combat prototype:
+ *   - WASD/arrows to move, mouse to aim, click to attack, Space to dash
+ *   - 1/2/3 keys to swap between Warrior / Ranger / Mage
+ *   - 3 training dummies that take damage, die, and respawn
+ *   - Floating damage numbers
+ *   - HP bars above all entities
+ *   - AoV-style fixed angled camera that follows the player
  *
- * Phase 1 will add: actual combat, dummy target, ability casting.
- * Phase 2 will add: network sync with the server.
+ * Phase 1 success criteria (per GDD §10):
+ *   "Character moves smoothly on PC + mobile, attack hits dummy"
  */
 
 import * as THREE from 'three';
 import {
+  // Core
   World,
   GameLoop,
   EventBus,
+  Events,
+  // Renderer
   SceneManager,
   CameraController,
   MaterialSystem,
   ModelRenderer,
   Palette,
+  // Assets
+  ContentRegistry,
+  // Input
   InputManager,
   KeyboardMouse,
   VirtualJoystick,
-  HUD,
+  // Engine components
   TransformComponent,
-  VelocityComponent,
   HealthComponent,
-  FactionComponent,
+  // UI
+  HUD,
 } from '@rift-and-raid/engine';
-import { PLAYER_DEFAULTS, WORLD_SIZE, type Faction } from '@rift-and-raid/shared';
+import { loadAllContent } from '@rift-and-raid/game';
+import {
+  // Prefabs
+  createPlayer,
+  createDummy,
+  // Components
+  PlayerComponent,
+  CombatTargetComponent,
+  DummyComponent,
+  ProjectileComponent,
+  HealthBarComponent,
+  // Systems
+  MovementSystem,
+  CombatSystem,
+  ProjectileSystem,
+  HealthSystem,
+  DummySystem,
+  DamageNumberSystem,
+  HealthBarSystem,
+  ClassSelectSystem,
+} from '@rift-and-raid/game';
+import { CLASS_STATS, WORLD_SIZE, type CharacterClass } from '@rift-and-raid/shared';
 
 // ── Bootstrap ──────────────────────────────────────────────────────────────
 
 const boot = document.getElementById('boot')!;
 
 async function main() {
-  // 1. Set up engine kernel
+  // 1. Engine kernel
   const world = new World();
   const eventBus = new EventBus();
 
-  // 2. Renderer
+  // 2. Content
+  const content = new ContentRegistry();
+  await loadAllContent(content);
+  console.log(content.summary());
+
+  // 3. Renderer
   const sceneManager = new SceneManager({ antialias: true });
   const materialSystem = new MaterialSystem();
   const modelRenderer = new ModelRenderer(materialSystem);
   const cameraController = new CameraController(sceneManager);
 
-  // 3. Ground plane (200m × 120m per GDD §7.1)
+  // 4. Ground + base markers + decorative crystals (from Phase 0)
   const ground = modelRenderer.createGround(WORLD_SIZE.width, WORLD_SIZE.depth, Palette.grass);
   ground.position.z = -WORLD_SIZE.depth / 2;
   sceneManager.scene.add(ground);
 
-  // 3b. Mark base locations with colored platforms
   const solariBase = modelRenderer.createBox(8, 0.2, 8, Palette.solariPrimary);
   solariBase.position.set(-80, 0.1, -40);
   sceneManager.scene.add(solariBase);
+
   const lunariBase = modelRenderer.createBox(8, 0.2, 8, Palette.lunariPrimary);
   lunariBase.position.set(80, 0.1, -40);
   sceneManager.scene.add(lunariBase);
 
-  // 3c. Some resource node placeholders
-  for (let i = 0; i < 6; i++) {
-    const crystal = modelRenderer.createCrystal(Palette.godshard);
-    crystal.position.set(
-      (Math.random() - 0.5) * 30,
-      0,
-      -40 + (Math.random() - 0.5) * 80
-    );
-    sceneManager.scene.add(crystal);
-  }
-
-  // 4. Player entity
-  const playerEntity = world.createEntity();
-  const transform = world.addComponent(playerEntity, new TransformComponent());
-  transform.x = 0;
-  transform.y = 0;
-  transform.z = -40;
-  transform.rotation = 0;
-  world.addComponent(playerEntity, new VelocityComponent());
-  const health = world.addComponent(playerEntity, new HealthComponent());
-  health.current = 130;
-  health.max = 130;
-  const factionComp = world.addComponent(playerEntity, new FactionComponent());
-  factionComp.faction = 'solari' as Faction;
-
-  // Player visual (capsule placeholder)
+  // 5. Player entity
+  const playerEntity = createPlayer(world, {
+    class: 'warrior',
+    faction: 'solari',
+    position: { x: 0, y: 0, z: -20 },
+  });
   const playerMesh = modelRenderer.createCapsule(Palette.solariPrimary);
-  playerMesh.position.set(transform.x, transform.y, transform.z);
+  const playerTransform = world.getComponent(playerEntity, TransformComponent)!;
+  playerMesh.position.set(playerTransform.x, playerTransform.y, playerTransform.z);
   sceneManager.attachObject(playerEntity, playerMesh);
   cameraController.follow(playerEntity);
 
-  // 5. Input
+  // 6. Dummies — cluster of 3 in front of player
+  const dummyPositions = [
+    { x: 0, y: 0, z: -35 },
+    { x: -4, y: 0, z: -32 },
+    { x: 4, y: 0, z: -32 },
+  ];
+  for (const pos of dummyPositions) {
+    const dummyEntity = createDummy(world, { position: pos, hp: 60 });
+    const dummyMesh = modelRenderer.createCapsule(0x808090, 1.6, 0.45);
+    dummyMesh.position.set(pos.x, pos.y, pos.z);
+    sceneManager.attachObject(dummyEntity, dummyMesh);
+  }
+
+  // 7. Input
   const inputManager = new InputManager();
   const keyboardMouse = new KeyboardMouse();
   const virtualJoystick = new VirtualJoystick();
@@ -102,85 +127,168 @@ async function main() {
   inputManager.addAdapter(virtualJoystick);
   inputManager.attach();
 
-  // 6. HUD
+  // 8. HUD
   const hud = new HUD();
 
-  // 7. Game loop
-  let lastSave = Date.now();
+  // 9. Systems
+  // Track projectile visual meshes for cleanup.
+  const projectileMeshes = new Map<number, THREE.Mesh>();
+
+  const systems = [
+    new ClassSelectSystem(content, {
+      onClassChange: (entity, newClass, color) => {
+        const mesh = sceneManager.getObject(entity);
+        if (!mesh) return;
+        // Swap capsule color by replacing material.
+        mesh.traverse((child) => {
+          const m = child as THREE.Mesh;
+          if (m.geometry instanceof THREE.CapsuleGeometry) {
+            m.material = materialSystem.flat(color);
+          }
+        });
+        const stats = CLASS_STATS[newClass];
+        console.log(`[Class] swapped to ${newClass} (HP ${stats.hp}, speed ${stats.moveSpeed})`);
+      },
+    }),
+    new MovementSystem(() => inputManager.getState()),
+    new CombatSystem(content, () => inputManager.getState(), (entity, proj) => {
+      // Create projectile visual.
+      const geo = new THREE.SphereGeometry(proj.radius, 8, 6);
+      const mat = new THREE.MeshBasicMaterial({ color: proj.color });
+      const mesh = new THREE.Mesh(geo, mat);
+      const t = world.getComponent(entity, TransformComponent);
+      if (t) mesh.position.set(t.x, t.y, t.z);
+      sceneManager.scene.add(mesh);
+      projectileMeshes.set(entity, mesh);
+    }),
+    new ProjectileSystem({
+      onSpawn: () => { /* mesh created in CombatSystem callback above */ },
+      onDestroy: (entity) => {
+        const mesh = projectileMeshes.get(entity);
+        if (mesh) {
+          sceneManager.scene.remove(mesh);
+          mesh.geometry.dispose();
+          (mesh.material as THREE.Material).dispose();
+          projectileMeshes.delete(entity);
+        }
+      },
+      onHit: (_proj, target, _dmg) => {
+        // Visual feedback: scale pulse on target.
+        const mesh = sceneManager.getObject(target);
+        if (mesh) {
+          mesh.scale.set(1.2, 1.2, 1.2);
+          setTimeout(() => mesh.scale.set(1, 1, 1), 80);
+        }
+      },
+    }),
+    new HealthSystem(eventBus, {
+      onPlayerDeath: (entity) => console.log(`[Player] ${entity} died — respawning`),
+      onPlayerRespawn: (entity) => console.log(`[Player] ${entity} respawned`),
+      onDummyDeath: (entity) => {
+        const mesh = sceneManager.getObject(entity);
+        if (mesh) {
+          // Hide mesh on death (DummySystem will show it again on respawn).
+          mesh.visible = false;
+        }
+        console.log(`[Dummy] ${entity} destroyed — respawning in 3s`);
+      },
+    }),
+    new DummySystem({
+      onRespawn: (entity) => {
+        const mesh = sceneManager.getObject(entity);
+        if (mesh) mesh.visible = true;
+      },
+    }),
+    new DamageNumberSystem({
+      worldToScreen: (x, y, z) => projectToScreen(sceneManager, x, y, z),
+    }),
+    new HealthBarSystem({
+      getScene: () => sceneManager.scene,
+      getCamera: () => sceneManager.camera,
+    }),
+  ];
+
+  for (const sys of systems) sys.init?.(world);
+
+  // 10. Mouse aim world projection (called every frame)
+  let mouseNDC = { x: 0, y: 0 };
+  window.addEventListener('mousemove', (e) => {
+    mouseNDC.x = (e.clientX / window.innerWidth) * 2 - 1;
+    mouseNDC.y = -(e.clientY / window.innerHeight) * 2 + 1;
+  });
+
+  function updateAimWorld() {
+    const ray = new THREE.Raycaster();
+    ray.setFromCamera(mouseNDC, sceneManager.camera);
+    const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+    const point = new THREE.Vector3();
+    if (ray.ray.intersectPlane(plane, point)) {
+      keyboardMouse.setAimWorld(point.x, point.z);
+      virtualJoystick.setAimWorld(playerTransform.x, playerTransform.z);
+    }
+  }
+
+  // 11. Game loop
   const loop = new GameLoop({
     update: (dt) => {
-      const state = inputManager.update(dt);
+      // Update input (refreshes edge-triggered flags).
+      inputManager.update(dt);
 
-      // Update mouse aim world position via raycast.
-      // Phase 0: simple ground-plane intersection using camera direction.
-      updateAimWorld(sceneManager, keyboardMouse, virtualJoystick, transform);
+      // Update mouse aim world position.
+      updateAimWorld();
 
-      // Movement
-      const speed = PLAYER_DEFAULTS.moveSpeed;
-      const velocity = world.getComponent(playerEntity, VelocityComponent)!;
-      velocity.x = state.move.x * speed;
-      velocity.z = state.move.y * speed;
-
-      transform.x += velocity.x * dt;
-      transform.z += velocity.z * dt;
-
-      // Clamp to world bounds
-      transform.x = Math.max(-WORLD_SIZE.width / 2, Math.min(WORLD_SIZE.width / 2, transform.x));
-      transform.z = Math.max(-WORLD_SIZE.depth, Math.min(0, transform.z));
-
-      // Rotate to face aim direction (or movement direction if no aim)
-      if (state.aimActive) {
-        const dx = state.aim.x - transform.x;
-        const dz = state.aim.y - transform.z;
-        if (Math.hypot(dx, dz) > 0.1) {
-          transform.rotation = Math.atan2(dx, dz);
-        }
-      } else if (Math.hypot(velocity.x, velocity.z) > 0.1) {
-        transform.rotation = Math.atan2(velocity.x, velocity.z);
+      // Run all gameplay systems.
+      for (const sys of systems) {
+        sys.update(world, dt);
       }
 
-      // Sync mesh to ECS transform
-      const mesh = sceneManager.getObject(playerEntity);
-      if (mesh) {
-        mesh.position.set(transform.x, transform.y, transform.z);
-        mesh.rotation.y = transform.rotation;
+      // Sync player mesh to ECS transform.
+      const playerMesh3d = sceneManager.getObject(playerEntity);
+      if (playerMesh3d) {
+        playerMesh3d.position.set(playerTransform.x, playerTransform.y, playerTransform.z);
+        playerMesh3d.rotation.y = playerTransform.rotation;
       }
 
-      // Attack (visual feedback: scale pulse)
-      if (state.attackPressed) {
-        eventBus.emit('player:attack', { entity: playerEntity });
-        if (mesh) {
-          mesh.scale.set(1.1, 1.1, 1.1);
-          setTimeout(() => mesh.scale.set(1, 1, 1), 100);
+      // Sync dummy meshes.
+      const dummies = world.query(DummyComponent, TransformComponent);
+      for (const dummyEntity of dummies) {
+        const dt2 = world.getComponent(dummyEntity, TransformComponent);
+        const mesh = sceneManager.getObject(dummyEntity);
+        if (dt2 && mesh) {
+          mesh.position.set(dt2.x, dt2.y, dt2.z);
         }
       }
 
-      // Dash
-      if (state.dashPressed) {
-        const dashDist = PLAYER_DEFAULTS.dashDistance;
-        const dir = Math.hypot(state.move.x, state.move.y) > 0.1
-          ? { x: state.move.x, z: state.move.y }
-          : { x: Math.sin(transform.rotation), z: Math.cos(transform.rotation) };
-        transform.x += dir.x * dashDist;
-        transform.z += dir.z * dashDist;
+      // Sync projectile meshes.
+      const projectiles = world.query(ProjectileComponent, TransformComponent);
+      for (const projEntity of projectiles) {
+        const pt = world.getComponent(projEntity, TransformComponent);
+        const mesh = projectileMeshes.get(projEntity);
+        if (pt && mesh) {
+          mesh.position.set(pt.x, pt.y, pt.z);
+        }
+      }
+
+      // HUD update.
+      const playerHealth = world.getComponent(playerEntity, HealthComponent);
+      const player = world.getComponent(playerEntity, PlayerComponent);
+      if (playerHealth && player) {
+        hud.setStats({
+          fps: loop.fps,
+          tickRate: loop.tickRate,
+          entityCount: world.entityCount,
+          playerHp: playerHealth.current,
+          playerMaxHp: playerHealth.max,
+          playerResources: {
+            iron: player.inventory.iron,
+            emberwood: player.inventory.emberwood,
+            godshard: player.inventory.godshard,
+          },
+        });
       }
 
       world.clearDirtyFlag();
-      eventBus.emit('world:tick', { dt });
-
-      // Update HUD stats
-      hud.setStats({
-        fps: loop.fps,
-        tickRate: loop.tickRate,
-        entityCount: world.entityCount,
-        playerHp: health.current,
-        playerMaxHp: health.max,
-        playerResources: { iron: 5, emberwood: 3, godshard: 1 },
-      });
-
-      // Demo: drain HP slowly to show health bar; restore on dash.
-      // (Phase 1 will add real combat.)
-      // Skip — leave HP static for Phase 0.
+      eventBus.emit(Events.WORLD_TICK, { dt });
     },
     render: (alpha) => {
       sceneManager.updateCamera(alpha);
@@ -195,46 +303,27 @@ async function main() {
     boot.classList.add('hidden');
     setTimeout(() => boot.remove(), 500);
   }, 300);
-
-  // Save stats every 5s for debug
-  setInterval(() => {
-    // no-op for Phase 0
-  }, 5000);
-
-  void lastSave;
 }
 
 /**
- * Project mouse position onto the ground plane (y=0) to get world-space aim.
- * Phase 0: simple raycaster against the ground plane.
+ * Project a world position to screen pixel coordinates.
+ * Returns null if the point is behind the camera.
  */
-function updateAimWorld(
+function projectToScreen(
   sceneManager: SceneManager,
-  keyboardMouse: KeyboardMouse,
-  virtualJoystick: VirtualJoystick,
-  playerTransform: TransformComponent
-) {
-  // Use a raycaster from camera through mouse NDC.
-  const ndc = getMouseNDC();
-  const ray = new THREE.Raycaster();
-  ray.setFromCamera(ndc, sceneManager.camera);
-  // Intersect with y=0 plane.
-  const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
-  const point = new THREE.Vector3();
-  if (ray.ray.intersectPlane(plane, point)) {
-    keyboardMouse.setAimWorld(point.x, point.z);
-    virtualJoystick.setAimWorld(playerTransform.x, playerTransform.z);
-  }
-}
-
-let mouseNDC = { x: 0, y: 0 };
-window.addEventListener('mousemove', (e) => {
-  mouseNDC.x = (e.clientX / window.innerWidth) * 2 - 1;
-  mouseNDC.y = -(e.clientY / window.innerHeight) * 2 + 1;
-});
-
-function getMouseNDC(): { x: number; y: number } {
-  return mouseNDC;
+  x: number,
+  y: number,
+  z: number
+): { x: number; y: number; visible: boolean } | null {
+  const v = new THREE.Vector3(x, y, z);
+  v.project(sceneManager.camera);
+  // v.z is in NDC [-1, 1]; behind camera if z > 1.
+  if (v.z > 1) return { x: 0, y: 0, visible: false };
+  return {
+    x: (v.x * 0.5 + 0.5) * window.innerWidth,
+    y: (-v.y * 0.5 + 0.5) * window.innerHeight,
+    visible: true,
+  };
 }
 
 main().catch((err) => {
