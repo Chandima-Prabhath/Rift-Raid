@@ -1,0 +1,23 @@
+{
+  "name": "@rift-and-raid/client",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@rift-and-raid/shared": "*",
+    "@rift-and-raid/engine": "*",
+    "@rift-and-raid/game": "*",
+    "three": "^0.170.0"
+  },
+  "devDependencies": {
+    "@types/three": "^0.170.0",
+    "vite": "^5.4.10"
+  }
+}

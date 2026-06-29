@@ -1,0 +1,14 @@
+{
+  "id": "shortbow",
+  "name": "Shortbow",
+  "class": "ranger",
+  "type": "ranged",
+  "damage": 16,
+  "cooldownMs": 700,
+  "range": 18,
+  "special": "fast_low_dropoff",
+  "cost": { "iron": 6, "emberwood": 3 },
+  "model": "weapons/shortbow.glb",
+  "icon": "weapons/shortbow.png",
+  "version": 1
+}

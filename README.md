@@ -1,10 +1,10 @@
-# Crimson Tide — Multiplayer Co-op 3D Web Game
+# Rift & Raid — Multiplayer Co-op 3D Web Game
 
-> **Working title.** Open to renaming once we have a stronger theme anchor.
+> **Name locked.** Theme: fantasy/medieval, Sibling Gods lore (see GDD.md).
 
 A persistent-world, team-based action RTS built for the web. Designed for 4–6 friends on mixed PC/mobile devices, with short combat sessions layered on top of a persistent world that grows even when no one is playing.
 
-- **Status**: Planning complete → Phase 0 (Foundation) about to start
+- **Status**: Phase 0 (Foundation) in progress
 - **Last updated**: 2026-06-29
 - **Owner**: Solo developer (with AI assistance) + friend playtest group (~6 players)
 
@@ -129,7 +129,7 @@ The engine is built as a **decoupled core** that knows nothing about the specifi
 ### 5.1 Directory Structure
 
 ```
-crimson-tide/
+crimson-tide/ → rift-and-raid/
 ├── README.md                    # This document
 ├── package.json
 ├── tsconfig.json
@@ -525,6 +525,7 @@ Items we've deferred but should decide before reaching them:
 | Date | Change |
 |---|---|
 | 2026-06-29 | Initial plan drafted. Decisions 1–8 locked. Architecture, persistence, content pipeline, hosting, roadmap defined. |
+| 2026-06-29 | Renamed game from "Crimson Tide" to "Rift & Raid". Started Phase 0 (engine foundation). |
 
 ---
 

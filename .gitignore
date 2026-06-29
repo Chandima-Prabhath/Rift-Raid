@@ -1,2 +1,51 @@
-skills/
+# Dependencies
 node_modules/
+**/node_modules/
+
+# Build output
+dist/
+**/dist/
+build/
+**/build/
+
+# Source maps (keep .ts, drop generated .js.map in dist)
+**/dist/**/*.js.map
+
+# Data files (SQLite + WAL)
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+data/
+**/data/*.sqlite*
+
+# Logs
+*.log
+logs/
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Env
+.env
+.env.local
+.env.*.local
+
+# Cache
+.cache/
+.parcel-cache/
+.vite/
+.eslintcache
+
+# Test coverage
+coverage/
+
+# Asset downloads (fetched by scripts, not committed)
+packages/game/assets/downloaded/

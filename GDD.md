@@ -1,4 +1,4 @@
-# Game Design Document — Hearth & Havoc
+# Game Design Document — Rift & Raid
 
 > **Status**: v1.0 — Complete design pass. Ready for development.
 > **Last updated**: 2026-06-29
@@ -46,17 +46,18 @@ This Game Design Document (GDD) is the **single source of truth for game content
 
 ## 2. Game Name & One-Liner
 
-**Name**: Hearth & Havoc
+**Name**: Rift & Raid
 
 **One-liner**: A persistent-world, team-based 3D action RTS where two tribes fight over a fractured world, harvesting by day, raiding by night, while monsters bleed from the Rift at the world's wound.
 
-**Tagline**: *Build your hearth. Wage your havoc.*
+**Tagline**: *Rifts scar the world. Raids decide who rules it.*
 
 **Why this name**:
-- **Hearth** = home, base, warmth, the cozy building loop (CoC appeal)
-- **Havoc** = chaos, combat, destruction, the action loop (Mini Militia appeal)
-- Together they capture the dual nature of the game in two memorable words
+- **Rift** = the wound in the world, source of monsters (Riftspawn), source of rare Godshard. The PvE layer.
+- **Raid** = the act of attacking the enemy base. The PvP layer.
+- Together they capture both core loops in two punchy, alliterative words
 - Easy to say, easy to type, easy to remember, not taken by any major game
+- The ampersand gives it a tabletop/board-game feel that matches the friend-group vibe
 
 ---
 
@@ -1084,6 +1085,7 @@ Items deferred but to decide before reaching them:
 | Date | Version | Change |
 |---|---|---|
 | 2026-06-29 | v1.0 | Initial GDD. All 14 design dimensions captured. Decisions locked: Sibling Gods lore, Solari/Lunari factions, 3 unified resources (Iron/Emberwood/Godshard), 3 classes (Warrior/Ranger/Mage), Shop purchasing (not crafting), Leader+Builder permission system, 200×120m map, 4–6s TTK, rubber-band mechanic, cosmetics via play. |
+| 2026-06-29 | v1.0.1 | Renamed game from "Hearth & Havoc" to "Rift & Raid". Updated tagline to match. |
 
 ---
 

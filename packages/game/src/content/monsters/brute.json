@@ -1,0 +1,12 @@
+{
+  "id": "brute",
+  "name": "Riftspawn Brute",
+  "tier": "major",
+  "hp": 200,
+  "damage": 25,
+  "speed": 2.5,
+  "behavior": "charger",
+  "drops": { "iron": 3, "godshard": 1 },
+  "model": "monsters/brute.glb",
+  "version": 1
+}

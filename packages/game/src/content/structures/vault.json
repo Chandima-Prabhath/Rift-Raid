@@ -1,0 +1,21 @@
+{
+  "id": "vault",
+  "name": "Resource Vault",
+  "category": "core",
+  "maxLevel": 3,
+  "baseHp": 500,
+  "constructionMs": 120000,
+  "effects": {
+    "1": { "capacity_per_resource": 100 },
+    "2": { "capacity_per_resource": 200 },
+    "3": { "capacity_per_resource": 500 }
+  },
+  "upgradeCost": {
+    "1": { "iron": 0 },
+    "2": { "iron": 30 },
+    "3": { "iron": 80, "godshard": 20 }
+  },
+  "model": "structures/vault.glb",
+  "icon": "structures/vault.png",
+  "version": 1
+}

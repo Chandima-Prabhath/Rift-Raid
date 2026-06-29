@@ -1,0 +1,21 @@
+{
+  "id": "shop",
+  "name": "Shop",
+  "category": "core",
+  "maxLevel": 3,
+  "baseHp": 400,
+  "constructionMs": 90000,
+  "effects": {
+    "1": { "buy_tier": 1 },
+    "2": { "buy_tier": 2 },
+    "3": { "buy_tier": 3 }
+  },
+  "upgradeCost": {
+    "1": { "iron": 0, "emberwood": 0 },
+    "2": { "iron": 40, "emberwood": 20 },
+    "3": { "iron": 60, "emberwood": 30, "godshard": 15 }
+  },
+  "model": "structures/shop.glb",
+  "icon": "structures/shop.png",
+  "version": 1
+}

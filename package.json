@@ -1,0 +1,26 @@
+{
+  "name": "rift-and-raid",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Rift & Raid — persistent-world, team-based 3D action RTS for the web",
+  "workspaces": [
+    "packages/shared",
+    "packages/engine",
+    "packages/game",
+    "packages/server",
+    "packages/client"
+  ],
+  "scripts": {
+    "dev": "concurrently -n server,client -c blue,green \"npm:dev:server\" \"npm:dev:client\"",
+    "dev:server": "npm -w @rift-and-raid/server run dev",
+    "dev:client": "npm -w @rift-and-raid/client run dev",
+    "build": "npm run -ws build --if-present",
+    "typecheck": "npm run -ws typecheck --if-present",
+    "test": "npm run -ws test --if-present",
+    "clean": "rm -rf packages/*/dist packages/*/node_modules node_modules"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.0",
+    "typescript": "^5.6.3"
+  }
+}

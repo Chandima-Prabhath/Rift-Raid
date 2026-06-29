@@ -1,0 +1,21 @@
+{
+  "id": "nexus",
+  "name": "Nexus",
+  "category": "core",
+  "maxLevel": 3,
+  "baseHp": 1000,
+  "constructionMs": 300000,
+  "effects": {
+    "1": { "respawn_point": 1 },
+    "2": { "respawn_point": 1, "gather_speed_bonus_percent": 20, "radius": 30 },
+    "3": { "respawn_point": 1, "gather_speed_bonus_percent": 20, "hp_bonus_percent": 10, "radius": 30 }
+  },
+  "upgradeCost": {
+    "1": { "iron": 0, "emberwood": 0 },
+    "2": { "iron": 50, "emberwood": 20 },
+    "3": { "iron": 100, "emberwood": 50, "godshard": 10 }
+  },
+  "model": "structures/nexus.glb",
+  "icon": "structures/nexus.png",
+  "version": 1
+}

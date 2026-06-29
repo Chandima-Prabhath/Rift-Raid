@@ -1,0 +1,14 @@
+{
+  "id": "sword_iron",
+  "name": "Iron Sword",
+  "class": "warrior",
+  "type": "melee",
+  "damage": 20,
+  "cooldownMs": 600,
+  "range": 2,
+  "special": "cleave",
+  "cost": { "iron": 5, "emberwood": 2 },
+  "model": "weapons/sword_iron.glb",
+  "icon": "weapons/sword_iron.png",
+  "version": 1
+}

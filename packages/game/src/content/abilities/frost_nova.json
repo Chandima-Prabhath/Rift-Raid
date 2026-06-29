@@ -1,0 +1,15 @@
+{
+  "id": "frost_nova",
+  "name": "Frost Nova",
+  "class": "mage",
+  "description": "Release a wave of frost, slowing enemies in 5m radius by 50% for 2 seconds.",
+  "cooldownMs": 10000,
+  "unlock": "default",
+  "effect": {
+    "type": "aoe_slow",
+    "radius": 5,
+    "durationMs": 2000
+  },
+  "vfx": "abilities/frost_nova.vfx",
+  "version": 1
+}

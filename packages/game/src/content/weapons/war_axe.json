@@ -1,0 +1,14 @@
+{
+  "id": "war_axe",
+  "name": "War Axe",
+  "class": "warrior",
+  "type": "melee",
+  "damage": 28,
+  "cooldownMs": 1000,
+  "range": 2,
+  "special": "heavy_self_slow",
+  "cost": { "iron": 8, "emberwood": 4 },
+  "model": "weapons/war_axe.glb",
+  "icon": "weapons/war_axe.png",
+  "version": 1
+}

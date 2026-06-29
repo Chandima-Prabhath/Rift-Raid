@@ -1,0 +1,15 @@
+{
+  "id": "charge",
+  "name": "Charge",
+  "class": "warrior",
+  "description": "Dash 6m forward, knocking back enemies hit for 15 damage.",
+  "cooldownMs": 6000,
+  "unlock": "default",
+  "effect": {
+    "type": "dash",
+    "damage": 15,
+    "distance": 6
+  },
+  "vfx": "abilities/charge.vfx",
+  "version": 1
+}

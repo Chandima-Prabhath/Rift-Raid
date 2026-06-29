@@ -1,0 +1,27 @@
+{
+  "name": "@rift-and-raid/game",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./content/*": {
+      "types": "./dist/content/*/index.d.ts",
+      "import": "./dist/content/*/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@rift-and-raid/shared": "*",
+    "@rift-and-raid/engine": "*"
+  }
+}

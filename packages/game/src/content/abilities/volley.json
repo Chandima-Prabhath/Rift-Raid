@@ -1,0 +1,15 @@
+{
+  "id": "volley",
+  "name": "Volley",
+  "class": "ranger",
+  "description": "Fire 3 arrows in a cone, each dealing 12 damage.",
+  "cooldownMs": 8000,
+  "unlock": "default",
+  "effect": {
+    "type": "projectile_burst",
+    "damage": 12,
+    "projectileCount": 3
+  },
+  "vfx": "abilities/volley.vfx",
+  "version": 1
+}

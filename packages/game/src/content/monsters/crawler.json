@@ -1,0 +1,12 @@
+{
+  "id": "crawler",
+  "name": "Riftspawn Crawler",
+  "tier": "minor",
+  "hp": 30,
+  "damage": 8,
+  "speed": 4,
+  "behavior": "melee_swarm",
+  "drops": { "emberwood": 1 },
+  "model": "monsters/crawler.glb",
+  "version": 1
+}
