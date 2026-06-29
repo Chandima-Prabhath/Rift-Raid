@@ -6,19 +6,17 @@
   "main": "./dist/index.js",
   "scripts": {
     "build": "tsc -b",
-    "dev": "tsx watch src/index.ts",
-    "start": "node dist/index.js",
+    "dev": "bun --watch src/index.ts",
+    "start": "bun dist/index.js",
     "typecheck": "tsc --noEmit",
     "clean": "rm -rf dist"
   },
   "dependencies": {
     "@rift-and-raid/shared": "*",
     "@rift-and-raid/engine": "*",
-    "@rift-and-raid/game": "*",
-    "better-sqlite3": "^11.5.0"
+    "@rift-and-raid/game": "*"
   },
   "devDependencies": {
-    "@types/better-sqlite3": "^7.6.11",
-    "tsx": "^4.19.2"
+    "bun-types": "^1.1.13"
   }
 }

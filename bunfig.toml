@@ -1,0 +1,10 @@
+# bunfig.toml — Bun configuration
+# https://bun.sh/docs/runtime/bunfig
+
+[install]
+# Use bun's lockfile format
+lockfile = true
+
+# Configure bun:sqlite and other bun modules
+[jsr]
+# (Phase 2+ if we use jsr.io packages)

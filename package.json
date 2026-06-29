@@ -11,12 +11,22 @@
     "packages/client"
   ],
   "scripts": {
-    "dev": "concurrently -n server,client -c blue,green \"npm:dev:server\" \"npm:dev:client\"",
-    "dev:server": "npm -w @rift-and-raid/server run dev",
-    "dev:client": "npm -w @rift-and-raid/client run dev",
-    "build": "npm run -ws build --if-present",
-    "typecheck": "npm run -ws typecheck --if-present",
-    "test": "npm run -ws test --if-present",
+    "dev": "concurrently -n server,client -c blue,green \"bun run dev:server\" \"bun run dev:client\"",
+    "dev:server": "bun --filter='@rift-and-raid/server' run dev",
+    "dev:client": "bun --filter='@rift-and-raid/client' run dev",
+    "build": "bun run build:shared && bun run build:engine && bun run build:game && bun run build:server",
+    "build:shared": "bun --filter='@rift-and-raid/shared' run build",
+    "build:engine": "bun --filter='@rift-and-raid/engine' run build",
+    "build:game": "bun --filter='@rift-and-raid/game' run build",
+    "build:server": "bun --filter='@rift-and-raid/server' run build",
+    "build:client": "bun --filter='@rift-and-raid/client' run build",
+    "typecheck": "bun run typecheck:shared && bun run typecheck:engine && bun run typecheck:game && bun run typecheck:server",
+    "typecheck:shared": "bun --filter='@rift-and-raid/shared' run typecheck",
+    "typecheck:engine": "bun --filter='@rift-and-raid/engine' run typecheck",
+    "typecheck:game": "bun --filter='@rift-and-raid/game' run typecheck",
+    "typecheck:server": "bun --filter='@rift-and-raid/server' run typecheck",
+    "test": "bun run test:smoke",
+    "test:smoke": "bun tests/ecs-smoke.mjs",
     "clean": "rm -rf packages/*/dist packages/*/node_modules node_modules"
   },
   "devDependencies": {

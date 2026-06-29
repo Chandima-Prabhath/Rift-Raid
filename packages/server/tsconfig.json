@@ -4,8 +4,9 @@
     "outDir": "./dist",
     "rootDir": "./src",
     "composite": true,
-    "module": "NodeNext",
-    "moduleResolution": "NodeNext"
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "types": ["bun-types"]
   },
   "include": ["src/**/*"],
   "references": [

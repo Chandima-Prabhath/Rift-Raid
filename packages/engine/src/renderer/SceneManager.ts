@@ -33,6 +33,19 @@ export class SceneManager {
       antialias: opts.antialias ?? true,
       powerPreference: 'high-performance',
     });
+    // If no canvas was passed, Three.js creates one as renderer.domElement.
+    // We must append it to the DOM and position it to fill the viewport.
+    if (!opts.canvas && this.renderer.domElement.parentNode === null) {
+      const canvas = this.renderer.domElement;
+      canvas.style.position = 'fixed';
+      canvas.style.top = '0';
+      canvas.style.left = '0';
+      canvas.style.width = '100%';
+      canvas.style.height = '100%';
+      canvas.style.display = 'block';
+      canvas.style.zIndex = '1';
+      document.body.appendChild(canvas);
+    }
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, CAMERA_CONFIG.maxPixelRatio));
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;

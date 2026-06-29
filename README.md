@@ -113,9 +113,9 @@ This gives the CoC/AoV fans their strategic depth without forcing every player t
 | Physics | **Rapier (WASM)** | Fast, deterministic, low-poly friendly |
 | Networking | **Colyseus (Node.js)** | Authoritative server, room system, state sync — purpose-built for web multiplayer |
 | Real-time transport | WebSocket (default), WebRTC via @geckos.io (optional upgrade) | WebSocket is fine for 4–6 players; Geckos gives UDP-like latency if needed later |
-| Database | **SQLite** (via better-sqlite3) | File-based, zero-config, perfect for self-hosted small game, survives crashes |
+| Database | **SQLite** (via `bun:sqlite`, zero-dependency) | File-based, zero-config, perfect for self-hosted small game, survives crashes |
 | Build tool | **Vite** | Fast HMR, easy Three.js setup |
-| Runtime | **Node.js + PM2** | Process manager keeps server alive, auto-restarts on crash |
+| Runtime | **Bun** (for both dev and prod) | Native TypeScript, fast boot, built-in SQLite, replaces Node + tsx + better-sqlite3 |
 | Reverse proxy | **Caddy** or **nginx** | HTTPS termination, static asset serving |
 | Tunnel (if behind NAT) | **Cloudflare Tunnel (cloudflared)** | Free, no port forwarding, gives public HTTPS URL through boarding house NAT |
 | CI/CD | GitHub Actions → SSH deploy | One commit = deployed game (when laptop is online) |
