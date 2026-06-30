@@ -183,3 +183,107 @@ export const NETWORK = {
   interpolationDelayMs: 100,
   maxSnapshotRate: 20, // server sends state at 20Hz
 } as const;
+
+// ============================================================================
+// Resources & Harvesting (Phase 4)
+// ============================================================================
+
+export const HARVESTING = {
+  /** Range at which a player can interact with a resource node (meters). */
+  range: 3.0,
+  /** Damage per harvest hit. */
+  damagePerHit: 10,
+  /** Cooldown between harvest hits (ms). */
+  cooldownMs: 500,
+  /** Resources gained per harvest hit. */
+  yieldPerHit: 2,
+  /** Time for a depleted node to respawn (ms). */
+  respawnMs: 30_000,
+  /** Node HP by resource type. */
+  nodeHp: {
+    iron: 50,
+    emberwood: 40,
+    godshard: 80,
+  } as const,
+  /** Node visual color by type (for minimap + crystal mesh). */
+  nodeColor: {
+    iron: 0x808890,
+    emberwood: 0x8a5a30,
+    godshard: 0xb080ff,
+  } as const,
+} as const;
+
+/** Resource node spawn positions. Distributed across the map, away from bases. */
+export const RESOURCE_NODE_SPAWNS: Array<{ x: number; z: number; type: 'iron' | 'emberwood' | 'godshard' }> = [
+  // Iron veins (north area, mid-map)
+  { x: -30, z: -60, type: 'iron' },
+  { x: -10, z: -70, type: 'iron' },
+  { x: 10, z: -70, type: 'iron' },
+  { x: 30, z: -60, type: 'iron' },
+  { x: -50, z: -50, type: 'iron' },
+  { x: 50, z: -50, type: 'iron' },
+  // Emberwood trees (mid-map, spread out)
+  { x: -40, z: -40, type: 'emberwood' },
+  { x: -20, z: -30, type: 'emberwood' },
+  { x: 0, z: -45, type: 'emberwood' },
+  { x: 20, z: -30, type: 'emberwood' },
+  { x: 40, z: -40, type: 'emberwood' },
+  // Godshard crystals (center, rare/contested)
+  { x: 0, z: -55, type: 'godshard' },
+  { x: -60, z: -20, type: 'godshard' },
+  { x: 60, z: -20, type: 'godshard' },
+];
+
+// ============================================================================
+// Bases & Building (Phase 5)
+// ============================================================================
+
+export const BUILDING = {
+  /** Range at which a player can deposit resources at their vault (meters). */
+  depositRange: 6.0,
+  /** Max structures per faction. */
+  maxStructuresPerFaction: 30,
+  /** Min distance between structures (meters). */
+  minStructureSpacing: 2.0,
+  /** Max distance from nexus to place a structure (meters). */
+  maxBuildRadius: 50,
+} as const;
+
+/** Buildable structure types with their properties. */
+export const STRUCTURE_TYPES = {
+  wall_stone: {
+    name: 'Stone Wall',
+    hp: 200,
+    constructionMs: 10_000,
+    cost: { iron: 5, emberwood: 0, godshard: 0 },
+    model: 'wall',
+    scale: 1.0,
+  },
+  wall_wood: {
+    name: 'Wood Wall',
+    hp: 100,
+    constructionMs: 5_000,
+    cost: { iron: 0, emberwood: 5, godshard: 0 },
+    model: 'wall-wood',
+    scale: 1.0,
+  },
+  tower: {
+    name: 'Watch Tower',
+    hp: 150,
+    constructionMs: 20_000,
+    cost: { iron: 10, emberwood: 5, godshard: 0 },
+    model: 'tower-square-build-a',
+    scale: 1.0,
+  },
+  barricade: {
+    name: 'Barricade',
+    hp: 80,
+    constructionMs: 3_000,
+    cost: { iron: 3, emberwood: 2, godshard: 0 },
+    model: 'fence',
+    scale: 1.0,
+  },
+} as const;
+
+export type StructureTypeId = keyof typeof STRUCTURE_TYPES;
+

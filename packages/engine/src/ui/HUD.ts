@@ -1,12 +1,13 @@
 /**
  * Rift & Raid — HUD
  *
- * Lightweight in-canvas HUD overlay. Phase 0: minimal FPS counter and
- * debug stats. Phase 3+ adds health bar, resource counts, minimap.
+ * In-canvas HUD overlay. Shows:
+ *   - Debug stats (top-left, below debug overlay)
+ *   - HP bar (bottom-left)
+ *   - Personal inventory (left side, above HP)
+ *   - Team vault resources (left side, below debug)
  *
- * Implemented as a DOM overlay (absolutely positioned divs over the canvas)
- * rather than Three.js sprites — DOM is cheaper for text and updates less
- * frequently than the render loop.
+ * DOM overlay — cheaper than Three.js sprites for text.
  */
 
 export interface HudStats {
@@ -16,6 +17,8 @@ export interface HudStats {
   playerHp?: number;
   playerMaxHp?: number;
   playerResources?: { iron: number; emberwood: number; godshard: number };
+  vaultResources?: { iron: number; emberwood: number; godshard: number };
+  faction?: string;
 }
 
 export class HUD {
@@ -23,6 +26,8 @@ export class HUD {
   private debug: HTMLDivElement;
   private health: HTMLDivElement;
   private resources: HTMLDivElement;
+  private vault: HTMLDivElement;
+  private controls: HTMLDivElement;
   private stats: HudStats = {};
 
   constructor() {
@@ -37,6 +42,7 @@ export class HUD {
     `;
     document.body.appendChild(this.container);
 
+    // Debug stats (top-left).
     this.debug = document.createElement('div');
     this.debug.style.cssText = `
       position: absolute;
@@ -47,9 +53,41 @@ export class HUD {
       font-size: 12px;
       line-height: 1.5;
       font-family: monospace;
+      display: none;
     `;
     this.container.appendChild(this.debug);
 
+    // Team vault resources (top-left, below debug).
+    this.vault = document.createElement('div');
+    this.vault.style.cssText = `
+      position: absolute;
+      top: 8px; left: 8px;
+      background: rgba(0,0,0,0.6);
+      padding: 8px 12px;
+      border-radius: 4px;
+      font-size: 13px;
+      line-height: 1.6;
+      min-width: 140px;
+      border: 1px solid rgba(255,255,255,0.15);
+    `;
+    this.container.appendChild(this.vault);
+
+    // Personal inventory (bottom-left, above HP).
+    this.resources = document.createElement('div');
+    this.resources.style.cssText = `
+      position: absolute;
+      bottom: 60px; left: 20px;
+      background: rgba(0,0,0,0.6);
+      padding: 6px 10px;
+      border-radius: 4px;
+      font-size: 12px;
+      line-height: 1.5;
+      min-width: 120px;
+      border: 1px solid rgba(255,255,255,0.15);
+    `;
+    this.container.appendChild(this.resources);
+
+    // HP bar (bottom-left).
     this.health = document.createElement('div');
     this.health.style.cssText = `
       position: absolute;
@@ -73,18 +111,19 @@ export class HUD {
     this.health.appendChild(this.makeTextSpan('HP', 'bottom: 6px; left: 10px; font-size: 12px;'));
     this.container.appendChild(this.health);
 
-    this.resources = document.createElement('div');
-    this.resources.style.cssText = `
+    // Controls hint (bottom-center).
+    this.controls = document.createElement('div');
+    this.controls.style.cssText = `
       position: absolute;
-      top: 8px; right: 8px;
-      background: rgba(0,0,0,0.5);
-      padding: 8px 12px;
-      border-radius: 4px;
-      font-size: 13px;
-      line-height: 1.6;
-      min-width: 120px;
+      bottom: 8px; left: 50%;
+      transform: translateX(-50%);
+      font-size: 11px;
+      color: rgba(255,255,255,0.5);
+      font-family: monospace;
+      white-space: nowrap;
     `;
-    this.container.appendChild(this.resources);
+    this.controls.innerHTML = 'WASD move · Mouse aim · L-Click attack · Q ability · Space dash · E interact · B build · R-Click rotate camera · Wheel zoom';
+    this.container.appendChild(this.controls);
   }
 
   private makeTextSpan(text: string, extraCss = ''): HTMLSpanElement {
@@ -101,11 +140,6 @@ export class HUD {
 
   private render(): void {
     const s = this.stats;
-    this.debug.innerHTML = [
-      `<b>Rift &amp; Raid</b> · Phase 0`,
-      `FPS: ${s.fps ?? '-'}  ·  Tick: ${s.tickRate ?? '-'}Hz`,
-      `Entities: ${s.entityCount ?? '-'}`,
-    ].join('<br>');
 
     const fill = document.getElementById('rr-health-fill');
     if (fill && s.playerHp !== undefined && s.playerMaxHp !== undefined) {
@@ -113,11 +147,25 @@ export class HUD {
       fill.style.width = `${pct}%`;
     }
 
+    // Personal inventory.
     if (s.playerResources) {
       this.resources.innerHTML = [
+        `<div style="font-size:10px;color:#889;margin-bottom:2px;">CARRYING</div>`,
         `<span style="color:#a0a0b0">Iron:</span> ${s.playerResources.iron}`,
-        `<span style="color:#a08060">Emberwood:</span> ${s.playerResources.emberwood}`,
+        `<span style="color:#a08060">Wood:</span> ${s.playerResources.emberwood}`,
         `<span style="color:#b080ff">Godshard:</span> ${s.playerResources.godshard}`,
+      ].join('<br>');
+    }
+
+    // Team vault.
+    if (s.vaultResources) {
+      const factionLabel = s.faction === 'solari' ? 'SOLARI VAULT' : 'LUNARI VAULT';
+      const factionColor = s.faction === 'solari' ? '#e07b3a' : '#4a90e2';
+      this.vault.innerHTML = [
+        `<div style="font-size:10px;color:${factionColor};margin-bottom:2px;font-weight:700;">${factionLabel}</div>`,
+        `<span style="color:#a0a0b0">Iron:</span> ${s.vaultResources.iron}`,
+        `<span style="color:#a08060">Wood:</span> ${s.vaultResources.emberwood}`,
+        `<span style="color:#b080ff">Godshard:</span> ${s.vaultResources.godshard}`,
       ].join('<br>');
     }
   }

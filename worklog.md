@@ -186,3 +186,41 @@ Stage Summary:
 - ✅ Ability on Q key (right-click freed for camera)
 - ✅ All packages typecheck cleanly
 - ✅ Multiplayer test passes (colors, models, inventory, movement)
+
+---
+Task ID: phase-4-5-resources-building
+Agent: main
+Task: Fix model scale, add minimap, implement Phase 4 (resources+harvesting) and Phase 5 (bases+building).
+
+Work Log:
+- Fixed character model scale: CharacterModelLoader now auto-normalizes to 1.8m target height using bounding box computation. Different Kenney models had slightly different base sizes; now all are uniform. Also re-centers horizontally and lifts so feet are at y=0.
+- Added Minimap (packages/client/src/Minimap.ts): canvas-based, top-right corner, 160x160px. Shows bases (large faction-colored circles), resource nodes (small colored dots by type), structures (faction-colored squares), players (faction-colored dots, local player highlighted green with white ring). Grid lines every 25 world units.
+- Phase 4 — Resources + Harvesting:
+  - Added HARVESTING config: range 3m, 10 dmg/hit, 500ms cooldown, 2 yield/hit, 30s respawn, per-type HP (iron 50, emberwood 40, godshard 80), per-type colors.
+  - Added RESOURCE_NODE_SPAWNS: 14 nodes (6 iron, 5 emberwood, 3 godshard) distributed across the map.
+  - Server: spawn ResourceNodeState on room create, handle 'harvest' message (range check, cooldown, deplete HP, add to player inventory, schedule respawn), handleRespawnNodes() in tick.
+  - Server: handle 'deposit' message (range check to faction vault, transfer inventory to TeamVaultState).
+  - Client: syncResourceNodeMeshes() creates tree/rock/crystal meshes for each node, updates visibility based on HP.
+  - Client: updateInteractPrompt() shows "Press E to harvest Iron" or "Press E to deposit" when near interactable objects.
+  - Client: NetworkSystem.sendHarvest/sendDeposit messages.
+- Phase 5 — Bases + Building:
+  - Added BUILDING config: depositRange 6m, maxStructuresPerFaction 30, minStructureSpacing 2m, maxBuildRadius 50m from nexus.
+  - Added STRUCTURE_TYPES: wall_stone (200hp, 10s, 5 iron), wall_wood (100hp, 5s, 5 wood), tower (150hp, 20s, 10 iron+5 wood), barricade (80hp, 3s, 3 iron+2 wood).
+  - Server: handle 'build' message (validate type, count limit, range from nexus, spacing, vault cost), create StructureState with buildProgress=0, handleConstruction() in tick increments progress.
+  - Server: melee attacks also damage enemy structures.
+  - Client: BuildMenu (B key toggle) shows grid of structures with cost/HP/construction time, highlights affordability from vault. Ghost preview (semi-transparent box) follows mouse on ground. Left-click places structure.
+  - Client: syncStructureMeshes() creates faction-colored boxes, scales Y by buildProgress (grows from ground), updates visibility.
+- HUD improvements:
+  - Added team vault display (top-left, faction-colored header showing vault resources).
+  - Personal inventory moved to bottom-left above HP bar.
+  - Controls hint at bottom-center (WASD/aim/attack/ability/dash/interact/build/camera/zoom).
+- All multiplayer tests pass. All packages typecheck cleanly.
+
+Stage Summary:
+- ✅ Character models auto-scaled to 1.8m (no more too-big models)
+- ✅ Minimap shows all entities in real-time
+- ✅ Phase 4: Resource nodes spawn, harvestable with E, deplete+respawn, deposit at vault
+- ✅ Phase 5: Build menu (B key), 4 structure types, ghost preview, construction timers
+- ✅ Per-player inventory + per-faction vault (fully isolated)
+- ✅ Melee damages structures
+- ✅ HUD shows personal inventory + team vault + controls hint

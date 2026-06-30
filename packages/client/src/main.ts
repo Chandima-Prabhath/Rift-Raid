@@ -1,5 +1,5 @@
 /**
- * Rift & Raid — Client entry point
+ * Rift & Raid — Client entry point (Phases 2–5)
  *
  * Wires up:
  *   - LoginScreen (name + class + model selection)
@@ -9,6 +9,10 @@
  *   - Game systems (movement, combat, health, dummy, damage numbers)
  *   - HUD, Chat, KillFeed, DeathOverlay, DebugOverlay
  *   - NameTag billboards (faction-colored name + HP bar above each player)
+ *   - Minimap (top-right canvas showing players/nodes/structures/bases)
+ *   - BuildMenu (B key, structure picker + ghost preview + place on click)
+ *   - InteractPrompt (E to harvest / E to deposit)
+ *   - Resource node meshes + structure meshes (GLB from Kenney packs)
  *
  * The client is server-authoritative for ALL gameplay state. Local systems
  * only handle input mapping, dummy combat (PvE), and visual interpolation.
@@ -56,6 +60,8 @@ import {
   WORLD_SIZE,
   CLASS_STATS,
   COMBAT,
+  HARVESTING,
+  BUILDING,
   type CharacterClass,
 } from '@rift-and-raid/shared';
 import { NetworkSystem } from './NetworkSystem.js';
@@ -63,6 +69,9 @@ import { ChatUI } from './ChatUI.js';
 import { DeathOverlay } from './DeathOverlay.js';
 import { KillFeed } from './KillFeed.js';
 import { LoginScreen } from './LoginScreen.js';
+import { Minimap } from './Minimap.js';
+import { BuildMenu } from './BuildMenu.js';
+import { InteractPrompt } from './InteractPrompt.js';
 
 // ============================================================================
 // Boot sequence
@@ -72,18 +81,10 @@ const boot = document.getElementById('boot');
 const SERVER_URL = new URLSearchParams(window.location.search).get('server')
   ?? 'ws://localhost:2567';
 
-const COLOR_BY_CLASS: Record<CharacterClass, number> = {
-  warrior: 0xd97742,
-  ranger: 0x60a060,
-  mage: 0x9050c0,
-};
-
 interface PlayerVisual {
   mesh: THREE.Group;
   nameTag: NameTag;
-  /** Last-applied characterModel — used to detect model swaps. */
   currentModelId: string | null;
-  /** True if the model GLB is still loading (we apply tint after load). */
   modelLoading: boolean;
 }
 
@@ -101,7 +102,6 @@ async function main() {
   // ── 3. Content ─────────────────────────────────────────────────────────
   const content = new ContentRegistry();
   await loadAllContent(content);
-  console.log(content.summary());
 
   // ── 4. Renderer + assets ───────────────────────────────────────────────
   const sceneManager = new SceneManager({ antialias: true });
@@ -126,9 +126,9 @@ async function main() {
 
   // ── 6. Local dummies (PvE training) ────────────────────────────────────
   const dummyPositions = [
-    { x: 0, y: 0, z: -35 },
-    { x: -4, y: 0, z: -32 },
-    { x: 4, y: 0, z: -32 },
+    { x: 0, y: 0, z: -25 },
+    { x: -4, y: 0, z: -22 },
+    { x: 4, y: 0, z: -22 },
   ];
   for (const pos of dummyPositions) {
     const dummyEntity = createDummy(world, { position: pos, hp: 60 });
@@ -150,48 +150,89 @@ async function main() {
   const deathOverlay = new DeathOverlay();
   const killFeed = new KillFeed();
   const debugOverlay = new DebugOverlay();
+  const minimap = new Minimap();
+  const interactPrompt = new InteractPrompt();
   let chatUI: ChatUI | null = null;
 
-  // ── 9. Per-entity visual tracking ──────────────────────────────────────
+  // ── 9. Visual tracking ─────────────────────────────────────────────────
   const playerVisuals = new Map<number, PlayerVisual>();
   const projectileMeshes = new Map<string, THREE.Mesh>();
   const localProjectileMeshes = new Map<number, THREE.Mesh>();
+  const resourceNodeMeshes = new Map<string, THREE.Object3D>();
+  const structureMeshes = new Map<string, THREE.Object3D>();
+  /** Build mode state: when a structure type is selected, clicking places it. */
+  let buildMode: { type: string; ghost: THREE.Object3D | null } = { type: '', ghost: null };
 
-  // ── 10. Network system ─────────────────────────────────────────────────
+  // ── 10. Build menu ─────────────────────────────────────────────────────
+  const buildMenu = new BuildMenu({
+    onSelect: (structureType) => {
+      // Remove old ghost.
+      if (buildMode.ghost) {
+        sceneManager.scene.remove(buildMode.ghost);
+        buildMode.ghost = null;
+      }
+      if (structureType) {
+        // Create a ghost preview mesh (semi-transparent box).
+        const geo = new THREE.BoxGeometry(2, 2, 0.3);
+        const mat = new THREE.MeshBasicMaterial({
+          color: 0x4a90e2,
+          transparent: true,
+          opacity: 0.4,
+        });
+        const ghost = new THREE.Mesh(geo, mat);
+        ghost.position.y = 1;
+        sceneManager.scene.add(ghost);
+        buildMode = { type: structureType, ghost };
+      } else {
+        buildMode = { type: '', ghost: null };
+      }
+    },
+    onPlace: (structureType, x, z, rotation) => {
+      network.sendBuild(structureType, x, z, rotation);
+    },
+    getVaultResources: () => {
+      const localPlayer = network.getLocalPlayerState();
+      if (!localPlayer) return { iron: 0, emberwood: 0, godshard: 0 };
+      const vault = network.getVaultState(localPlayer.faction);
+      return vault ?? { iron: 0, emberwood: 0, godshard: 0 };
+    },
+  });
+
+  // B key toggles build menu.
+  window.addEventListener('keydown', (e) => {
+    if (e.code === 'KeyB') {
+      buildMenu.toggle();
+      e.preventDefault();
+    }
+    if (e.code === 'Escape' && buildMode.ghost) {
+      buildMenu.cancel();
+      if (buildMode.ghost) {
+        sceneManager.scene.remove(buildMode.ghost);
+        buildMode = { type: '', ghost: null };
+      }
+    }
+  });
+
+  // ── 11. Network system ─────────────────────────────────────────────────
   const network = new NetworkSystem(
     world,
     SERVER_URL,
     () => inputManager.getState(),
     {
       onPlayerSpawn: async (entity, _sessionId, isLocal, color, characterModel) => {
-        // Start with a placeholder capsule. The GLB loads async.
         const mesh = modelRenderer.createCapsule(color);
         sceneManager.attachObject(entity, mesh);
-
         const nameTag = new NameTag();
         mesh.add(nameTag.sprite);
+        playerVisuals.set(entity, { mesh, nameTag, currentModelId: null, modelLoading: true });
 
-        playerVisuals.set(entity, {
-          mesh,
-          nameTag,
-          currentModelId: null,
-          modelLoading: true,
-        });
+        if (isLocal) cameraController.follow(entity);
 
-        if (isLocal) {
-          cameraController.follow(entity);
-          console.log(`[Client] Local player entity ${entity}, camera following`);
-        }
-
-        // Async-load the GLB model and replace the capsule.
         try {
           const model = await characterLoader.load(characterModel);
           characterLoader.applyFactionTint(model, color);
-
-          // Replace capsule children with the model (keep the name tag).
           const vis = playerVisuals.get(entity);
           if (vis) {
-            // Remove old capsule body (but keep name tag + group transform).
             while (mesh.children.length > 0) {
               const child = mesh.children[0];
               if (child === nameTag.sprite) break;
@@ -207,37 +248,24 @@ async function main() {
           if (vis) vis.modelLoading = false;
         }
       },
-      onPlayerUpdate: (
-        entity, x, y, z, rotation, _color, alive, hp, maxHp,
-        characterModel, name, faction,
-      ) => {
+      onPlayerUpdate: (entity, x, y, z, rotation, color, alive, hp, maxHp, characterModel, name, faction) => {
         const vis = playerVisuals.get(entity);
         if (vis) {
           vis.mesh.position.set(x, y, z);
           vis.mesh.rotation.y = rotation;
           vis.mesh.visible = alive;
 
-          // Update name tag with current state.
           const localEntity = network.localPlayerEntity;
           const isLocal = entity === localEntity;
           const localFaction = localEntity !== null
             ? (world.getComponent(localEntity, PlayerComponent)?.faction ?? 'solari')
             : 'solari';
-          vis.nameTag.update({
-            name,
-            faction: faction as 'solari' | 'lunari',
-            hp,
-            maxHp,
-            isLocal,
-            localFaction: localFaction as 'solari' | 'lunari',
-          });
+          vis.nameTag.update({ name, faction: faction as 'solari' | 'lunari', hp, maxHp, isLocal, localFaction: localFaction as 'solari' | 'lunari' });
 
-          // Handle model swap (player changed their character model).
           if (vis.currentModelId !== characterModel && !vis.modelLoading) {
             vis.modelLoading = true;
             characterLoader.load(characterModel).then((model) => {
-              characterLoader.applyFactionTint(model, _color);
-              // Remove old model child (keep name tag).
+              characterLoader.applyFactionTint(model, color);
               while (vis.mesh.children.length > 0) {
                 const child = vis.mesh.children[0];
                 if (child === vis.nameTag.sprite) break;
@@ -246,18 +274,13 @@ async function main() {
               vis.mesh.add(model);
               vis.currentModelId = characterModel;
               vis.modelLoading = false;
-            }).catch((err) => {
-              console.error(`[Client] Model swap failed:`, err);
-              vis.modelLoading = false;
-            });
+            }).catch(() => { vis.modelLoading = false; });
           }
         }
       },
-      onPlayerLeave: (entity, _sessionId) => {
+      onPlayerLeave: (entity) => {
         const vis = playerVisuals.get(entity);
-        if (vis) {
-          vis.nameTag.dispose();
-        }
+        if (vis) vis.nameTag.dispose();
         sceneManager.detachObject(entity);
         playerVisuals.delete(entity);
       },
@@ -291,7 +314,6 @@ async function main() {
             <h2>Cannot connect to server</h2>
             <p>Make sure the server is running: <code>bun run dev:server</code></p>
             <p>Server URL: <code>${SERVER_URL}</code></p>
-            <p>Override with <code>?server=ws://your-host:2567</code></p>
           </div>`;
         }
       },
@@ -306,15 +328,11 @@ async function main() {
 
   chatUI = new ChatUI((text) => network.sendChat(text));
 
-  // ── 11. Game systems ───────────────────────────────────────────────────
+  // ── 12. Game systems ───────────────────────────────────────────────────
   const systems = [
     new ClassSelectSystem(content, {
-      onClassChange: (entity, newClass, color) => {
-        // For local player, send class swap to server. Server will broadcast
-        // the new class which triggers model tint update via onPlayerUpdate.
+      onClassChange: (_entity, newClass) => {
         network.sendClassSwap(newClass);
-        console.log(`[Class] swapped to ${newClass}`);
-        void entity; void color;
       },
     }),
     new MovementSystem(() => inputManager.getState(), () => cameraController.yaw),
@@ -338,7 +356,7 @@ async function main() {
           localProjectileMeshes.delete(entity);
         }
       },
-      onHit: (_proj, target, _dmg) => {
+      onHit: (_proj, target) => {
         const mesh = sceneManager.getObject(target);
         if (mesh) {
           mesh.scale.set(1.2, 1.2, 1.2);
@@ -347,8 +365,8 @@ async function main() {
       },
     }),
     new HealthSystem(eventBus, {
-      onPlayerDeath: (entity) => console.log(`[Player] ${entity} died (local)`),
-      onPlayerRespawn: (entity) => console.log(`[Player] ${entity} respawned (local)`),
+      onPlayerDeath: (entity) => console.log(`[Player] ${entity} died`),
+      onPlayerRespawn: (entity) => console.log(`[Player] ${entity} respawned`),
       onDummyDeath: (entity) => {
         const mesh = sceneManager.getObject(entity);
         if (mesh) mesh.visible = false;
@@ -371,41 +389,191 @@ async function main() {
 
   for (const sys of systems) sys.init?.(world);
 
-  // ── 12. Mouse aim (project to ground plane) ────────────────────────────
+  // ── 13. Mouse aim + build placement ────────────────────────────────────
   let mouseNDC = { x: 0, y: 0 };
   window.addEventListener('mousemove', (e) => {
     mouseNDC.x = (e.clientX / window.innerWidth) * 2 - 1;
     mouseNDC.y = -(e.clientY / window.innerHeight) * 2 + 1;
   });
 
-  function updateAimWorld() {
+  function getGroundPoint(): THREE.Vector3 | null {
     const ray = new THREE.Raycaster();
-    const ndc = new THREE.Vector2(mouseNDC.x, mouseNDC.y);
-    ray.setFromCamera(ndc, sceneManager.camera);
+    ray.setFromCamera(new THREE.Vector2(mouseNDC.x, mouseNDC.y), sceneManager.camera);
     const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
     const point = new THREE.Vector3();
-    if (ray.ray.intersectPlane(plane, point)) {
+    if (ray.ray.intersectPlane(plane, point)) return point;
+    return null;
+  }
+
+  function updateAimAndBuildGhost() {
+    const point = getGroundPoint();
+    if (point) {
       keyboardMouse.setAimWorld(point.x, point.z);
       const localEntity = network.localPlayerEntity;
       if (localEntity) {
         const t = world.getComponent(localEntity, TransformComponent);
         if (t) virtualJoystick.setAimWorld(t.x, t.z);
       }
+      // Update build ghost position.
+      if (buildMode.ghost) {
+        buildMode.ghost.position.x = point.x;
+        buildMode.ghost.position.z = point.z;
+      }
     }
   }
 
-  // ── 13. Death state tracking ───────────────────────────────────────────
+  // Click to place structure (only when in build mode).
+  window.addEventListener('mousedown', (e) => {
+    if (e.button !== 0) return; // left-click only
+    if (!buildMode.type) return;
+    const point = getGroundPoint();
+    if (point) {
+      network.sendBuild(buildMode.type, point.x, point.z, 0);
+    }
+  });
+
+  // ── 14. Resource node + structure mesh management ──────────────────────
+  /** Track which nodes/structures we've already created meshes for. */
+  const knownNodeIds = new Set<string>();
+  const knownStructureIds = new Set<string>();
+
+  function syncResourceNodeMeshes() {
+    network.forEachResourceNode((node, nodeId) => {
+      if (knownNodeIds.has(nodeId)) {
+        // Update existing mesh.
+        const mesh = resourceNodeMeshes.get(nodeId);
+        if (mesh) {
+          mesh.visible = node.hp > 0;
+        }
+        return;
+      }
+      knownNodeIds.add(nodeId);
+      // Create mesh based on resource type.
+      const color = HARVESTING.nodeColor[node.resourceType as 'iron' | 'emberwood' | 'godshard'] ?? 0x808080;
+      let mesh: THREE.Object3D;
+      if (node.resourceType === 'emberwood') {
+        // Tree: brown trunk + green canopy (cylinder + cone).
+        const group = new THREE.Group();
+        const trunk = new THREE.Mesh(
+          new THREE.CylinderGeometry(0.2, 0.3, 1.5, 6),
+          new THREE.MeshStandardMaterial({ color: 0x6a4a2a })
+        );
+        trunk.position.y = 0.75;
+        trunk.castShadow = true;
+        group.add(trunk);
+        const canopy = new THREE.Mesh(
+          new THREE.ConeGeometry(1.2, 2, 7),
+          new THREE.MeshStandardMaterial({ color: 0x3a6a3a })
+        );
+        canopy.position.y = 2.5;
+        canopy.castShadow = true;
+        group.add(canopy);
+        mesh = group;
+      } else if (node.resourceType === 'iron') {
+        // Iron vein: cluster of gray rocks.
+        mesh = modelRenderer.createCrystal(color, 1.0, 0.6);
+        mesh.position.y = 0.5;
+      } else {
+        // Godshard: purple crystal.
+        mesh = modelRenderer.createCrystal(color, 1.5, 0.5);
+        mesh.position.y = 0.75;
+      }
+      mesh.position.x = node.x;
+      mesh.position.z = node.z;
+      sceneManager.scene.add(mesh);
+      resourceNodeMeshes.set(nodeId, mesh);
+    });
+  }
+
+  function syncStructureMeshes() {
+    network.forEachStructure((struct, structId) => {
+      if (knownStructureIds.has(structId)) {
+        // Update: scale based on build progress.
+        const mesh = structureMeshes.get(structId);
+        if (mesh) {
+          const progress = struct.buildProgress;
+          mesh.scale.y = Math.max(0.1, progress);
+          mesh.visible = struct.hp > 0;
+        }
+        return;
+      }
+      knownStructureIds.add(structId);
+      // Create a simple colored box for the structure.
+      const factionColor = struct.faction === 'solari' ? 0xe07b3a : 0x4a90e2;
+      const geo = new THREE.BoxGeometry(2, 2, 0.5);
+      const mat = new THREE.MeshStandardMaterial({
+        color: factionColor,
+        transparent: !struct.built,
+        opacity: struct.built ? 1.0 : 0.6,
+      });
+      const mesh = new THREE.Mesh(geo, mat);
+      mesh.position.set(struct.x, 1, struct.z);
+      mesh.rotation.y = struct.rotation;
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      mesh.scale.y = Math.max(0.1, struct.buildProgress);
+      sceneManager.scene.add(mesh);
+      structureMeshes.set(structId, mesh);
+    });
+  }
+
+  // ── 15. Interaction detection (harvest / deposit prompts) ──────────────
+  function updateInteractPrompt() {
+    const localPlayer = network.getLocalPlayerState();
+    if (!localPlayer || !localPlayer.alive) {
+      interactPrompt.hide();
+      return;
+    }
+
+    // Check if near a resource node.
+    let nearestNodeId: string | null = null;
+    let nearestNodeType = '';
+    let nearestNodeDist = Infinity;
+    network.forEachResourceNode((node, nodeId) => {
+      if (node.hp <= 0) return;
+      const dist = Math.hypot(node.x - localPlayer.x, node.z - localPlayer.z);
+      if (dist <= HARVESTING.range) {
+        if (dist < nearestNodeDist) {
+          nearestNodeId = nodeId;
+          nearestNodeType = node.resourceType;
+          nearestNodeDist = dist;
+        }
+      }
+    });
+
+    // Check if near vault (deposit).
+    const vaultX = localPlayer.faction === 'solari' ? -80 : 80;
+    const vaultZ = -40;
+    const vaultDist = Math.hypot(vaultX - localPlayer.x, vaultZ - localPlayer.z);
+    const hasResources = localPlayer.invIron + localPlayer.invEmberwood + localPlayer.invGodshard > 0;
+
+    if (vaultDist <= BUILDING.depositRange && hasResources) {
+      interactPrompt.show('Press E to deposit resources');
+    } else if (nearestNodeId) {
+      const typeName = nearestNodeType.charAt(0).toUpperCase() + nearestNodeType.slice(1);
+      interactPrompt.show(`Press E to harvest ${typeName}`);
+    } else {
+      interactPrompt.hide();
+    }
+
+    // Handle E key press.
+    const input = inputManager.getState();
+    if (input.interactPressed) {
+      if (vaultDist <= BUILDING.depositRange && hasResources) {
+        network.sendDeposit();
+      } else if (nearestNodeId) {
+        network.sendHarvest(nearestNodeId);
+      }
+    }
+  }
+
+  // ── 16. Death state tracking ───────────────────────────────────────────
   let wasLocalAlive = true;
 
-  // ── 14. Debug overlay data source ──────────────────────────────────────
+  // ── 17. Debug overlay ──────────────────────────────────────────────────
   const debugLogLines: string[] = [];
-  function pushDebugLog(line: string): void {
-    debugLogLines.push(`[${new Date().toLocaleTimeString()}] ${line}`);
-    if (debugLogLines.length > 20) debugLogLines.shift();
-  }
   debugOverlay.setSource({
     getStats: () => {
-      const localEntity = network.localPlayerEntity;
       const playerState = network.getLocalPlayerState();
       let localPlayer: any = null;
       if (playerState) {
@@ -440,19 +608,57 @@ async function main() {
     },
   });
 
-  // ── 15. Game loop ──────────────────────────────────────────────────────
+  // ── 18. Minimap update ─────────────────────────────────────────────────
+  function updateMinimap() {
+    const entities: Array<any> = [];
+    // Bases.
+    entities.push({ type: 'base', x: -80, z: -40, faction: 'solari' });
+    entities.push({ type: 'base', x: 80, z: -40, faction: 'lunari' });
+    // Resource nodes.
+    network.forEachResourceNode((node) => {
+      if (node.hp > 0) {
+        entities.push({ type: 'resource', x: node.x, z: node.z, resourceType: node.resourceType });
+      }
+    });
+    // Structures.
+    network.forEachStructure((struct) => {
+      if (struct.hp > 0) {
+        entities.push({ type: 'structure', x: struct.x, z: struct.z, faction: struct.faction });
+      }
+    });
+    // Players.
+    const localSid = network.localSession;
+    network.forEachPlayer((p, sid) => {
+      entities.push({
+        type: 'player',
+        x: p.x,
+        z: p.z,
+        faction: p.faction,
+        isLocal: sid === localSid,
+        alive: p.alive,
+      });
+    });
+    minimap.update(entities);
+  }
+
+  // ── 19. Game loop ──────────────────────────────────────────────────────
   const loop = new GameLoop({
     update: (dt) => {
       inputManager.update(dt);
-      updateAimWorld();
+      updateAimAndBuildGhost();
 
-      for (const sys of systems) {
-        sys.update(world, dt);
-      }
+      for (const sys of systems) sys.update(world, dt);
 
       network.update(dt);
 
-      // Sync local player mesh + check death state.
+      // Sync resource node + structure meshes.
+      syncResourceNodeMeshes();
+      syncStructureMeshes();
+
+      // Interaction prompts.
+      updateInteractPrompt();
+
+      // Local player sync + death state.
       const localEntity = network.localPlayerEntity;
       if (localEntity !== null) {
         const t = world.getComponent(localEntity, TransformComponent);
@@ -461,70 +667,61 @@ async function main() {
           mesh.position.set(t.x, t.y, t.z);
           mesh.rotation.y = t.rotation;
         }
-
         const playerState = network.getLocalPlayerState();
         if (playerState) {
           if (!playerState.alive && wasLocalAlive) {
             deathOverlay.show(COMBAT.respawnDelayMs, playerState.diedAt);
             wasLocalAlive = false;
-            pushDebugLog(`Local player died`);
           } else if (playerState.alive && !wasLocalAlive) {
             deathOverlay.hide();
             wasLocalAlive = true;
-            pushDebugLog(`Local player respawned`);
           } else if (!playerState.alive) {
             deathOverlay.updateTimer(COMBAT.respawnDelayMs, playerState.diedAt);
           }
         }
       }
 
-      // Sync dummy meshes.
-      const dummies = world.query(DummyComponent, TransformComponent);
-      for (const dummyEntity of dummies) {
+      // Dummy sync.
+      for (const dummyEntity of world.query(DummyComponent, TransformComponent)) {
         const dt2 = world.getComponent(dummyEntity, TransformComponent);
         const mesh = sceneManager.getObject(dummyEntity);
-        if (dt2 && mesh) {
-          mesh.position.set(dt2.x, dt2.y, dt2.z);
-        }
+        if (dt2 && mesh) mesh.position.set(dt2.x, dt2.y, dt2.z);
       }
 
-      // Sync local projectile meshes (for dummy combat).
-      const projectiles = world.query(ProjectileComponent, TransformComponent);
-      for (const projEntity of projectiles) {
+      // Local projectile sync.
+      for (const projEntity of world.query(ProjectileComponent, TransformComponent)) {
         const pt = world.getComponent(projEntity, TransformComponent);
         const mesh = localProjectileMeshes.get(projEntity);
-        if (pt && mesh) {
-          mesh.position.set(pt.x, pt.y, pt.z);
-        }
+        if (pt && mesh) mesh.position.set(pt.x, pt.y, pt.z);
       }
 
-      // Update HUD.
+      // HUD.
       if (localEntity !== null) {
         const playerHealth = world.getComponent(localEntity, HealthComponent);
-        const player = world.getComponent(localEntity, PlayerComponent);
         const playerState = network.getLocalPlayerState();
-        if (playerHealth && player) {
+        if (playerHealth && playerState) {
+          const vault = network.getVaultState(playerState.faction);
           hud.setStats({
             fps: loop.fps,
             tickRate: loop.tickRate,
             entityCount: world.entityCount,
             playerHp: playerHealth.current,
             playerMaxHp: playerHealth.max,
-            playerResources: playerState ? {
+            playerResources: {
               iron: playerState.invIron,
               emberwood: playerState.invEmberwood,
               godshard: playerState.invGodshard,
-            } : {
-              iron: player.inventory.iron,
-              emberwood: player.inventory.emberwood,
-              godshard: player.inventory.godshard,
             },
+            vaultResources: vault ?? { iron: 0, emberwood: 0, godshard: 0 },
+            faction: playerState.faction,
           });
         }
       }
 
-      // Update debug overlay.
+      // Minimap + debug overlay.
+      updateMinimap();
       debugOverlay.update();
+      buildMenu.refresh();
 
       world.clearDirtyFlag();
       eventBus.emit(Events.WORLD_TICK, { dt });
@@ -537,23 +734,14 @@ async function main() {
 
   loop.start();
 
-  // ── 16. Connect to server ──────────────────────────────────────────────
+  // ── 20. Connect ────────────────────────────────────────────────────────
   console.log(`[Client] Connecting to ${SERVER_URL}...`);
   network.connect().then(() => {
     if (boot) {
       boot.classList.add('hidden');
       setTimeout(() => boot.remove(), 500);
     }
-    pushDebugLog(`Connected as ${loginOpts.name}`);
-  }).catch((err) => {
-    console.error('[Client] Connection failed:', err);
-    pushDebugLog(`Connection failed: ${err.message}`);
-  });
-
-  // ── 17. Window resize ──────────────────────────────────────────────────
-  window.addEventListener('resize', () => {
-    // SceneManager already handles this internally.
-  });
+  }).catch((err) => console.error('[Client] Connection failed:', err));
 }
 
 // ============================================================================
@@ -576,7 +764,5 @@ function projectToScreen(
 
 main().catch((err) => {
   console.error('Boot failed:', err);
-  if (boot) {
-    boot.innerHTML = `<div style="color:#f44;padding:20px;">Boot failed: ${err.message}</div>`;
-  }
+  if (boot) boot.innerHTML = `<div style="color:#f44;padding:20px;">Boot failed: ${err.message}</div>`;
 });

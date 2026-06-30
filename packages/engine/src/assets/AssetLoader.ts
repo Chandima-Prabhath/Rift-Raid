@@ -241,16 +241,34 @@ export class CharacterModelLoader {
       console.warn(`[CharacterModelLoader] Unknown model "${modelId}", falling back to default`);
       modelId = CHARACTER_MODELS[0];
     }
-    // Vite serves packages/game/assets as the public dir root.
-    // So /characters/character-male-a.glb → packages/game/assets/characters/character-male-a.glb
     const url = `/characters/${modelId}.glb`;
     const model = await this.assetLoader.loadGLTF(url);
     this.loaded.add(modelId);
 
-    // Kenney character models are very small (≈0.1 units). Scale up to ~1.8m.
-    model.scale.setScalar(20);
     // Kenney models face -Z by default; rotate 180° to face +Z.
     model.rotation.y = Math.PI;
+
+    // Auto-normalize scale to target height (1.8m).
+    // Different Kenney character models have slightly different base sizes,
+    // so we compute the bounding box and scale uniformly to hit 1.8m.
+    const TARGET_HEIGHT = 1.8;
+    const box = new THREE.Box3().setFromObject(model);
+    const size = new THREE.Vector3();
+    box.getSize(size);
+    if (size.y > 0.001) {
+      const scale = TARGET_HEIGHT / size.y;
+      model.scale.setScalar(scale);
+    }
+
+    // Re-center horizontally on origin (so the model stands on its position
+    // point, not offset to one side).
+    const boxAfter = new THREE.Box3().setFromObject(model);
+    const center = new THREE.Vector3();
+    boxAfter.getCenter(center);
+    model.position.x -= center.x;
+    model.position.z -= center.z;
+    // Lift so feet are at y=0.
+    model.position.y -= boxAfter.min.y;
 
     return model;
   }

@@ -187,6 +187,44 @@ export class NetworkSystem {
     this.room?.send('chat', { text });
   }
 
+  sendHarvest(nodeId: string): void {
+    this.room?.send('harvest', { nodeId });
+  }
+
+  sendDeposit(): void {
+    this.room?.send('deposit', {});
+  }
+
+  sendBuild(structureType: string, x: number, z: number, rotation: number): void {
+    this.room?.send('build', { structureType, x, z, rotation });
+  }
+
+  /** Get the vault state for a faction. */
+  getVaultState(faction: string): { iron: number; emberwood: number; godshard: number; level: number } | null {
+    if (!this.room) return null;
+    const vaults = this.room.state?.vaults;
+    if (!vaults) return null;
+    const v = vaults.get(faction);
+    if (!v) return null;
+    return { iron: v.iron, emberwood: v.emberwood, godshard: v.godshard, level: v.level };
+  }
+
+  /** Iterate all resource nodes. */
+  forEachResourceNode(cb: (node: any, nodeId: string) => void): void {
+    if (!this.room) return;
+    const nodes = this.room.state?.resourceNodes;
+    if (!nodes) return;
+    nodes.forEach((n, id) => cb(n, id));
+  }
+
+  /** Iterate all structures. */
+  forEachStructure(cb: (struct: any, structId: string) => void): void {
+    if (!this.room) return;
+    const structs = this.room.state?.structures;
+    if (!structs) return;
+    structs.forEach((s, id) => cb(s, id));
+  }
+
   /** Get the local player's PlayerState (read from room.state). */
   getLocalPlayerState(): SharedPlayerState | null {
     if (!this.room || !this.localSessionId) return null;
