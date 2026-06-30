@@ -53,7 +53,6 @@ import {
   HealthSystem,
   DummySystem,
   DamageNumberSystem,
-  HealthBarSystem,
   ClassSelectSystem,
 } from '@rift-and-raid/game';
 import {
@@ -386,10 +385,9 @@ async function main() {
     new DamageNumberSystem({
       worldToScreen: (x, y, z) => projectToScreen(sceneManager, x, y, z),
     }),
-    new HealthBarSystem({
-      getScene: () => sceneManager.scene,
-      getCamera: () => sceneManager.camera,
-    }),
+    // NOTE: HealthBarSystem is intentionally NOT included here.
+    // The NameTag (billboard sprite above each player) already shows
+    // the player's name + HP bar. Having both would render two HP bars.
   ];
 
   for (const sys of systems) sys.init?.(world);

@@ -42,7 +42,6 @@ import {
 import {
   PlayerComponent,
   CombatTargetComponent,
-  HealthBarComponent,
 } from '@rift-and-raid/game';
 import type { InputState } from '@rift-and-raid/engine';
 
@@ -443,7 +442,9 @@ export class NetworkSystem {
     combat.attackable = !isLocal;
     combat.faction = player.faction as 'solari' | 'lunari';
 
-    this.world.addComponent(entity, new HealthBarComponent()).targetEntity = entity;
+    // NOTE: HealthBarComponent is intentionally NOT added here.
+    // The NameTag (billboard sprite) handles HP display.
+    // The old HealthBarSystem rendered a duplicate 3D HP bar.
 
     return entity;
   }

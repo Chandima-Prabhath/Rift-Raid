@@ -1,38 +1,32 @@
 /**
- * Rift & Raid — NameTagSystem
+ * Rift & Raid — NameTag
  *
- * Renders a billboarded name tag above each player, showing:
- *   - Player name (colored by relationship to local player)
- *   - HP bar (background + fill)
+ * Billboarded name + HP bar above each player. Uses THREE.Sprite with a
+ * CanvasTexture. Redrawn only when state changes (name/hp/relationship).
  *
- * Color coding (per user spec):
+ * Color coding:
  *   - Self:    green  (#3ee07a)
  *   - Ally:    blue   (#4a90e2)
  *   - Enemy:   red    (#e04a4a)
  *
- * Implementation:
- *   - Uses THREE.Sprite for the billboard (always faces camera).
- *   - Draws name + HP bar to an offscreen canvas, uploads as CanvasTexture.
- *   - Redraws when HP or name changes (dirty flag) — not every frame.
+ * Layout (canvas 256×64):
+ *   ┌──────────────────────────┐
+ *   │       Player Name        │  ← colored text, 20px bold
+ *   │  ▓▓▓▓▓▓▓▓▓░░░░░░░░░░░    │  ← HP bar (relationship color)
+ *   └──────────────────────────┘
  *
- * Position: the sprite is added as a child of the player's mesh group,
- * positioned at y = 2.4 (above head). It auto-billboards via Sprite.
+ * The HP bar is thin (8px) and sits below the name. Background is
+ * semi-transparent dark. No border on the banner itself — cleaner look.
  */
 
 import * as THREE from 'three';
 
 export interface NameTagOwner {
-  /** Player name. */
   name: string;
-  /** Faction for ally/enemy check. */
   faction: 'solari' | 'lunari';
-  /** Current HP (0..maxHp). */
   hp: number;
-  /** Max HP. */
   maxHp: number;
-  /** Is this the local player's own character? */
   isLocal: boolean;
-  /** Local player's faction (for ally/enemy determination). */
   localFaction: 'solari' | 'lunari';
 }
 
@@ -46,7 +40,7 @@ export class NameTag {
   constructor() {
     this.canvas = document.createElement('canvas');
     this.canvas.width = 256;
-    this.canvas.height = 96;
+    this.canvas.height = 64;
     const ctx = this.canvas.getContext('2d');
     if (!ctx) throw new Error('NameTag: 2d context unavailable');
     this.ctx = ctx;
@@ -62,14 +56,14 @@ export class NameTag {
       depthWrite: false,
     });
     this.sprite = new THREE.Sprite(material);
-    // Scale: name tags should be ~1.5m wide, ~0.6m tall in world space.
-    this.sprite.scale.set(1.5, 0.6, 1);
-    this.sprite.position.set(0, 2.4, 0);
-    // Render slightly above other transparent objects.
+    // Banner is ~1.6m wide, ~0.4m tall in world space.
+    this.sprite.scale.set(1.6, 0.4, 1);
+    // Position above the character's head (model is 1.8m tall).
+    this.sprite.position.set(0, 2.2, 0);
     this.sprite.renderOrder = 10;
   }
 
-  /** Update the name tag. Redraws only if name/hp/relationship changed. */
+  /** Update the name tag. Redraws only if state changed. */
   update(owner: NameTagOwner): void {
     const hpPct = owner.maxHp > 0 ? Math.max(0, Math.min(1, owner.hp / owner.maxHp)) : 0;
     const hash = `${owner.name}|${owner.faction}|${Math.round(hpPct * 100)}|${owner.isLocal}`;
@@ -85,59 +79,41 @@ export class NameTag {
     const h = this.canvas.height;
     ctx.clearRect(0, 0, w, h);
 
-    // Determine color by relationship to local player.
     const color = this.getColor(owner);
 
-    // ── Background panel (semi-transparent black for readability) ────────
-    const bgX = 8;
-    const bgY = 8;
-    const bgW = w - 16;
-    const bgH = h - 16;
-    const radius = 8;
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.55)';
+    // ── Background panel ─────────────────────────────────────────────────
+    const bgX = 4;
+    const bgY = 4;
+    const bgW = w - 8;
+    const bgH = h - 8;
+    const radius = 6;
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.65)';
     this.roundRect(ctx, bgX, bgY, bgW, bgH, radius);
     ctx.fill();
 
-    // Thin colored border.
-    ctx.strokeStyle = color;
-    ctx.lineWidth = 2;
-    this.roundRect(ctx, bgX, bgY, bgW, bgH, radius);
-    ctx.stroke();
-
-    // ── Name (top half) ──────────────────────────────────────────────────
+    // ── Name (top portion) ───────────────────────────────────────────────
     ctx.fillStyle = color;
-    ctx.font = 'bold 22px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+    ctx.font = 'bold 20px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    const nameY = bgY + 22;
-    ctx.fillText(owner.name, w / 2, nameY);
+    ctx.fillText(owner.name, w / 2, bgY + 18);
 
-    // ── HP bar (bottom half) ─────────────────────────────────────────────
-    // HP bar fill uses the SAME color as the name (relationship-based):
-    //   green = self, blue = ally, red = enemy.
-    const barX = bgX + 12;
-    const barY = bgY + 44;
-    const barW = bgW - 24;
-    const barH = 16;
-    // Background.
-    ctx.fillStyle = 'rgba(30, 30, 30, 0.85)';
-    this.roundRect(ctx, barX, barY, barW, barH, 4);
+    // ── HP bar (bottom portion) ──────────────────────────────────────────
+    const barX = bgX + 10;
+    const barY = bgY + 34;
+    const barW = bgW - 20;
+    const barH = 8;
+    // Track (background).
+    ctx.fillStyle = 'rgba(20, 20, 20, 0.9)';
+    this.roundRect(ctx, barX, barY, barW, barH, 3);
     ctx.fill();
     // Fill (relationship color).
     ctx.fillStyle = color;
     const fillW = Math.max(0, barW * hpPct);
     if (fillW > 0) {
-      this.roundRect(ctx, barX, barY, fillW, barH, 4);
+      this.roundRect(ctx, barX, barY, fillW, barH, 3);
       ctx.fill();
     }
-    // HP text.
-    ctx.fillStyle = '#ffffff';
-    ctx.font = 'bold 14px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
-    ctx.fillText(
-      `${Math.round(owner.hp)} / ${owner.maxHp}`,
-      w / 2,
-      barY + barH / 2 + 1
-    );
   }
 
   private getColor(owner: NameTagOwner): string {
