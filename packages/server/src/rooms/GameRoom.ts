@@ -1,13 +1,19 @@
 /**
- * Rift & Raid — GameRoom (Colyseus) — Phase 3
+ * Rift & Raid — GameRoom (Colyseus 0.16 + schema v3)
  *
- * Server-authoritative combat:
- *   - Players send attack/ability/dash messages
- *   - Server validates cooldowns, performs hit detection, applies damage
- *   - Server spawns and simulates projectiles
- *   - Server handles death (alive=false) and respawn (after 5s)
+ * Server-authoritative game room. Each client joins with a username and
+ * (optionally) a chosen character model. The server:
+ *   - Assigns factions in alternating order (solari, lunari, solari, ...)
+ *   - Applies faction-based color tints to player models
+ *   - Tracks per-sessionId inventory (no shared state between players)
+ *   - Simulates movement, combat, abilities, death/respawn
+ *   - Broadcasts state at 20Hz via setPatchRate
  *
- * Phase 3 scope: full PvP combat + 1 ability per class + respawn.
+ * Per-player state isolation:
+ *   Each PlayerState instance is owned by exactly one sessionId. Mutations
+ *   to player.invIron etc. only affect that player's record — there is no
+ *   shared global inventory. The TeamVaultState (separate schema) holds
+ *   the per-faction shared vault, keyed by faction name.
  */
 
 import { Room, Client } from '@colyseus/core';
@@ -15,6 +21,7 @@ import {
   GameState,
   PlayerState,
   ProjectileState,
+  TeamVaultState,
   CLASS_STATS,
   PLAYER_DEFAULTS,
   WORLD_SIZE,
@@ -51,7 +58,6 @@ interface ChatInput {
 }
 
 interface AttackInput {
-  /** Aim point in world space (for melee arc direction + ranged projectile direction). */
   aimX: number;
   aimZ: number;
 }
@@ -62,26 +68,62 @@ interface AbilityInput {
   aimZ: number;
 }
 
+interface ModelSwapInput {
+  characterModel: string;
+}
+
+interface JoinOptions {
+  name?: string;
+  characterModel?: string;
+  characterClass?: CharacterClass;
+}
+
 // ============================================================================
 // Constants
 // ============================================================================
 
 const TICK_HZ = 20;
 const TICK_MS = 1000 / TICK_HZ;
-const COLOR_BY_CLASS: Record<CharacterClass, number> = {
-  warrior: 0xd97742,
-  ranger: 0x60a060,
-  mage: 0x9050c0,
+
+/** Faction colors — applied to character models as tint. */
+const FACTION_COLORS: Record<Faction, number> = {
+  solari: 0xe07b3a, // warm orange
+  lunari: 0x4a90e2, // cool blue
 };
+
+/** Distinct class accent (overlaid on faction color for visual variety). */
+const CLASS_ACCENT: Record<CharacterClass, number> = {
+  warrior: 0xc0392b, // red
+  ranger: 0x27ae60, // green
+  mage: 0x9b59b6, // purple
+};
+
 const ABILITY_BY_CLASS: Record<CharacterClass, string> = {
   warrior: 'charge',
   ranger: 'volley',
   mage: 'frost_nova',
 };
-const SPAWN_POSITIONS = {
+
+const SPAWN_POSITIONS: Record<Faction, { x: number; y: number; z: number }> = {
   solari: { x: -80, y: 0, z: -40 },
   lunari: { x: 80, y: 0, z: -40 },
 };
+
+/** Available character models (must match files in packages/game/assets/characters/). */
+const AVAILABLE_MODELS = [
+  'character-male-a',
+  'character-male-b',
+  'character-male-c',
+  'character-male-d',
+  'character-male-e',
+  'character-male-f',
+  'character-female-a',
+  'character-female-b',
+  'character-female-c',
+  'character-female-d',
+  'character-female-e',
+  'character-female-f',
+];
 
 // ============================================================================
 // GameRoom
@@ -89,17 +131,37 @@ const SPAWN_POSITIONS = {
 
 export class GameRoom extends Room<GameState> {
   maxClients = 16;
-  /** Transient input storage — NOT synced over the wire. */
+
+  /** Transient input storage — NOT synced over the wire. Per-sessionId. */
   private playerInputs = new Map<string, MoveInput>();
   private playerLastDash = new Map<string, number>();
   /** Projectile ID counter. */
   private nextProjectileId = 0;
   /** Track which projectiles have hit which players (for pierce). */
   private projectileHits = new Map<string, Set<string>>();
+  /** O(1) reverse lookup: PlayerState → sessionId (avoids O(n) scan each tick). */
+  private sessionIdByPlayer = new Map<PlayerState, string>();
 
   onCreate(): void {
     console.log('[GameRoom] room created');
     this.setState(new GameState());
+
+    // Initialize per-faction vaults.
+    const solariVault = new TeamVaultState();
+    solariVault.faction = 'solari';
+    solariVault.iron = 0;
+    solariVault.emberwood = 0;
+    solariVault.godshard = 0;
+    solariVault.level = 1;
+    this.state.vaults.set('solari', solariVault);
+
+    const lunariVault = new TeamVaultState();
+    lunariVault.faction = 'lunari';
+    lunariVault.iron = 0;
+    lunariVault.emberwood = 0;
+    lunariVault.godshard = 0;
+    lunariVault.level = 1;
+    this.state.vaults.set('lunari', lunariVault);
 
     // ── Message handlers ──────────────────────────────────────────────────
     this.onMessage('move', (client: Client, input: MoveInput) => {
@@ -128,8 +190,19 @@ export class GameRoom extends Room<GameState> {
       const stats = CLASS_STATS[input.characterClass];
       player.maxHp = stats.hp;
       player.hp = stats.hp;
-      player.color = COLOR_BY_CLASS[input.characterClass];
       player.abilityId = ABILITY_BY_CLASS[input.characterClass];
+      console.log(`[GameRoom] ${player.name} swapped to ${input.characterClass}`);
+    });
+
+    this.onMessage('model_swap', (client: Client, input: ModelSwapInput) => {
+      const player = this.state.players.get(client.sessionId);
+      if (!player) return;
+      if (!AVAILABLE_MODELS.includes(input.characterModel)) {
+        console.warn(`[GameRoom] Invalid model: ${input.characterModel}`);
+        return;
+      }
+      player.characterModel = input.characterModel;
+      console.log(`[GameRoom] ${player.name} swapped model to ${input.characterModel}`);
     });
 
     this.onMessage('attack', (client: Client, input: AttackInput) => {
@@ -152,39 +225,68 @@ export class GameRoom extends Room<GameState> {
       });
     });
 
+    // Ping/pong for round-trip latency measurement.
+    this.onMessage('ping', (client: Client, payload: { seq: number; t: number }) => {
+      client.send('pong', { seq: payload.seq, t: payload.t });
+    });
+
     // dt from Colyseus is in milliseconds; convert to seconds for gameplay.
     this.setSimulationInterval((dtMs) => this.tick(dtMs / 1000), TICK_MS);
     // Enable state broadcasting at 20Hz (sends diffs to all clients).
     this.setPatchRate(TICK_MS);
   }
 
-  onJoin(client: Client, _options?: unknown): void {
+  onJoin(client: Client, options?: JoinOptions): void {
     console.log(`[GameRoom] ${client.sessionId} joined`);
+
     const playerCount = this.state.players.size;
+    // Alternate factions: 1st → solari, 2nd → lunari, 3rd → solari, ...
     const faction: Faction = playerCount % 2 === 0 ? 'solari' : 'lunari';
     const spawn = SPAWN_POSITIONS[faction];
 
+    // Parse join options.
+    const name = (options?.name && options.name.length > 0 && options.name.length <= 20)
+      ? options.name
+      : `Player ${playerCount + 1}`;
+    const characterModel = options?.characterModel && AVAILABLE_MODELS.includes(options.characterModel)
+      ? options.characterModel
+      : AVAILABLE_MODELS[playerCount % AVAILABLE_MODELS.length];
+    const characterClass: CharacterClass = options?.characterClass ?? 'warrior';
+
     const player = new PlayerState();
-    player.name = `Player ${playerCount + 1}`;
+    player.name = name;
     player.faction = faction;
-    player.characterClass = 'warrior';
+    player.characterClass = characterClass;
+    player.characterModel = characterModel;
+    player.color = FACTION_COLORS[faction];
     player.x = spawn.x;
     player.y = spawn.y;
     player.z = spawn.z;
     player.rotation = faction === 'solari' ? 0 : Math.PI;
-    player.hp = CLASS_STATS.warrior.hp;
-    player.maxHp = CLASS_STATS.warrior.hp;
+    player.hp = CLASS_STATS[characterClass].hp;
+    player.maxHp = CLASS_STATS[characterClass].hp;
     player.alive = true;
-    player.color = COLOR_BY_CLASS.warrior;
-    player.abilityId = ABILITY_BY_CLASS.warrior;
+    player.abilityId = ABILITY_BY_CLASS[characterClass];
+    // Per-player inventory starts at 0 — NOT shared with anyone.
+    player.invIron = 0;
+    player.invEmberwood = 0;
+    player.invGodshard = 0;
 
     this.state.players.set(client.sessionId, player);
-    console.log(`[GameRoom] ${player.name} spawned at (${player.x}, ${player.z}) as ${faction}`);
+    this.sessionIdByPlayer.set(player, client.sessionId);
+
+    console.log(
+      `[GameRoom] ${player.name} spawned at (${player.x}, ${player.z}) as ${faction} ` +
+      `(model=${characterModel}, color=0x${player.color.toString(16)})`
+    );
   }
 
   onLeave(client: Client, _consented?: boolean): void {
     const player = this.state.players.get(client.sessionId);
     console.log(`[GameRoom] ${player?.name ?? client.sessionId} left`);
+    if (player) {
+      this.sessionIdByPlayer.delete(player);
+    }
     this.state.players.delete(client.sessionId);
     this.playerInputs.delete(client.sessionId);
     this.playerLastDash.delete(client.sessionId);
@@ -203,12 +305,9 @@ export class GameRoom extends Room<GameState> {
     if (!player || !player.alive) return;
 
     const now = Date.now();
-    // Weapon cooldown — Phase 3 uses class-based default weapons.
     const weaponCooldown = this.getWeaponCooldown(player.characterClass);
     if (now - player.lastAttackAt < weaponCooldown) return;
     player.lastAttackAt = now;
-
-    console.log(`[GameRoom] ${player.name} attacks (${player.characterClass})`);
 
     if (player.characterClass === 'warrior') {
       this.performMeleeAttack(player, input);
@@ -218,7 +317,6 @@ export class GameRoom extends Room<GameState> {
   }
 
   private getWeaponCooldown(cls: CharacterClass): number {
-    // Phase 3: hardcoded per class. Phase 4+ reads from content registry.
     switch (cls) {
       case 'warrior': return 600;
       case 'ranger': return 700;
@@ -239,7 +337,6 @@ export class GameRoom extends Room<GameState> {
     const damage = this.getWeaponDamage('warrior');
     const arcHalf = COMBAT.meleeArcHalfAngle;
 
-    // Attacker facing — based on aim point.
     const dx = input.aimX - attacker.x;
     const dz = input.aimZ - attacker.z;
     const facingRotation = Math.hypot(dx, dz) > 0.1 ? Math.atan2(dx, dz) : attacker.rotation;
@@ -263,7 +360,6 @@ export class GameRoom extends Room<GameState> {
       const angle = Math.acos(Math.max(-1, Math.min(1, dot)));
       if (angle > arcHalf) continue;
 
-      // Hit!
       this.applyDamage(target, damage, attacker);
     }
   }
@@ -279,7 +375,7 @@ export class GameRoom extends Room<GameState> {
 
     const proj = new ProjectileState();
     proj.id = `proj_${this.nextProjectileId++}`;
-    proj.ownerId = this.findSessionIdByPlayer(attacker) ?? '';
+    proj.ownerId = this.sessionIdByPlayer.get(attacker) ?? '';
     proj.faction = attacker.faction;
     proj.damage = damage;
     proj.x = attacker.x + dirX * 0.6;
@@ -291,15 +387,14 @@ export class GameRoom extends Room<GameState> {
     proj.speed = 25;
     proj.lifetimeMs = 3000;
     if (attacker.characterClass === 'mage') {
-      proj.color = 0xff8030; // fire orange
+      proj.color = 0xff8030;
     } else {
-      proj.color = 0xffe060; // arrow yellow
+      proj.color = 0xffe060;
     }
     proj.pierce = false;
 
     this.state.projectiles.set(proj.id, proj);
     this.projectileHits.set(proj.id, new Set());
-    console.log(`[GameRoom] Projectile spawned: ${proj.id} by ${attacker.name} at (${proj.x.toFixed(1)}, ${proj.z.toFixed(1)})`);
   }
 
   // --------------------------------------------------------------------------
@@ -333,7 +428,6 @@ export class GameRoom extends Room<GameState> {
     }
   }
 
-  /** Warrior: Charge — dash forward, damage enemies in path. */
   private abilityCharge(player: PlayerState, input: AbilityInput): void {
     const config = ABILITIES.charge;
     const dx = input.aimX - player.x;
@@ -343,12 +437,10 @@ export class GameRoom extends Room<GameState> {
     const dirZ = len > 0 ? dz / len : Math.cos(player.rotation);
     player.rotation = Math.atan2(dirX, dirZ);
 
-    // Move player forward.
     player.x += dirX * config.distance;
     player.z += dirZ * config.distance;
     this.clampPosition(player);
 
-    // Damage enemies near the endpoint.
     for (const target of this.state.players.values()) {
       if (target === player) continue;
       if (!target.alive) continue;
@@ -361,7 +453,6 @@ export class GameRoom extends Room<GameState> {
     }
   }
 
-  /** Ranger: Volley — fire 3 projectiles in a cone. */
   private abilityVolley(player: PlayerState, input: AbilityInput): void {
     const config = ABILITIES.volley;
     const dx = input.aimX - player.x;
@@ -370,7 +461,7 @@ export class GameRoom extends Room<GameState> {
     const baseAngle = len > 0 ? Math.atan2(dx, dz) : player.rotation;
     player.rotation = baseAngle;
 
-    const ownerId = this.findSessionIdByPlayer(player) ?? '';
+    const ownerId = this.sessionIdByPlayer.get(player) ?? '';
     for (let i = -1; i <= 1; i++) {
       const angle = baseAngle + i * (config.spreadAngle / 2);
       const dirX = Math.sin(angle);
@@ -397,7 +488,6 @@ export class GameRoom extends Room<GameState> {
     }
   }
 
-  /** Mage: Frost Nova — AoE damage + slow around self. */
   private abilityFrostNova(player: PlayerState, _input: AbilityInput): void {
     const config = ABILITIES.frost_nova;
     for (const target of this.state.players.values()) {
@@ -424,7 +514,6 @@ export class GameRoom extends Room<GameState> {
       target.alive = false;
       target.diedAt = Date.now();
       console.log(`[GameRoom] ${target.name} was killed by ${attacker.name}`);
-      // Broadcast kill event to all clients for kill feed.
       this.broadcast('kill', {
         victimName: target.name,
         killerName: attacker.name,
@@ -446,6 +535,10 @@ export class GameRoom extends Room<GameState> {
     player.z = spawn.z;
     player.diedAt = 0;
     player.slowMs = 0;
+    // Reset inventory on death (per GDD: lose carried resources).
+    player.invIron = 0;
+    player.invEmberwood = 0;
+    player.invGodshard = 0;
     console.log(`[GameRoom] ${player.name} respawned`);
   }
 
@@ -459,18 +552,16 @@ export class GameRoom extends Room<GameState> {
 
     // ── Player movement + slow + respawn ──────────────────────────────────
     for (const player of this.state.players.values()) {
-      // Tick slow effect.
       if (player.slowMs > 0) {
         player.slowMs = Math.max(0, player.slowMs - dt * 1000);
       }
 
-      // Respawn check.
       if (!player.alive) {
         this.handleRespawn(player);
         continue;
       }
 
-      const sessionId = this.findSessionIdByPlayer(player);
+      const sessionId = this.sessionIdByPlayer.get(player);
       if (!sessionId) continue;
       const input = this.playerInputs.get(sessionId);
       if (!input) continue;
@@ -495,20 +586,17 @@ export class GameRoom extends Room<GameState> {
     // ── Projectile simulation ─────────────────────────────────────────────
     const projectilesToDestroy: string[] = [];
     for (const [projId, proj] of this.state.projectiles.entries()) {
-      // Age.
       proj.lifetimeMs -= dt * 1000;
       if (proj.lifetimeMs <= 0) {
         projectilesToDestroy.push(projId);
         continue;
       }
 
-      // Move.
       const moveDistance = proj.speed * dt;
       proj.x += proj.dx * moveDistance;
       proj.y += proj.dy * moveDistance;
       proj.z += proj.dz * moveDistance;
 
-      // Collision with players.
       const hits = this.projectileHits.get(projId) ?? new Set<string>();
       let hitSomething = false;
       for (const [targetSessionId, target] of this.state.players.entries()) {
@@ -518,11 +606,14 @@ export class GameRoom extends Room<GameState> {
         if (target.faction === proj.faction) continue;
 
         const tdx = target.x - proj.x;
-        const tdy = 1.0 - proj.y; // approximate player center at y=1
+        const tdy = 1.0 - proj.y;
         const tdz = target.z - proj.z;
         const distance = Math.hypot(tdx, tdy, tdz);
         if (distance <= COMBAT.projectileRadius + COMBAT.playerRadius) {
-          this.applyDamage(target, proj.damage, this.state.players.get(proj.ownerId)!);
+          const attacker = this.state.players.get(proj.ownerId);
+          if (attacker) {
+            this.applyDamage(target, proj.damage, attacker);
+          }
           hits.add(targetSessionId);
           if (!proj.pierce) {
             hitSomething = true;
@@ -547,15 +638,13 @@ export class GameRoom extends Room<GameState> {
   // Helpers
   // --------------------------------------------------------------------------
 
-  private findSessionIdByPlayer(target: PlayerState): string | null {
-    for (const [sessionId, player] of this.state.players.entries()) {
-      if (player === target) return sessionId;
-    }
-    return null;
-  }
-
   private clampPosition(player: PlayerState): void {
     player.x = Math.max(-WORLD_SIZE.width / 2, Math.min(WORLD_SIZE.width / 2, player.x));
     player.z = Math.max(-WORLD_SIZE.depth, Math.min(0, player.z));
+  }
+
+  /** Expose available character models for the client to display in the picker. */
+  static getAvailableModels(): string[] {
+    return [...AVAILABLE_MODELS];
   }
 }

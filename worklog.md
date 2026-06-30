@@ -73,3 +73,73 @@ Stage Summary:
 - Ready for Phase 2: Multiplayer skeleton (Colyseus, 2 clients see each other move, simple chat)
 
 
+
+---
+Task ID: phase-4-multiplayer-fix
+Agent: main
+Task: Fix broken multiplayer state sync, faction colors, add name tags with HP bars, character model selection, and engine debugging tools.
+
+Work Log:
+- Diagnosed root cause: clients received ZERO state from server. Two compounding issues:
+  1. Colyseus version mismatch: server @colyseus/core@0.15.57 vs client colyseus.js@0.15.28 — incompatible protocols
+  2. Schema used defineTypes() which doesn't reliably register fields with the encoder
+- Upgraded all Colyseus packages: @colyseus/core@0.16.22, colyseus.js@0.16.22, @colyseus/schema@3.0.76, @colyseus/ws-transport@0.16.5, @colyseus/monitor@0.16.7
+- Rewrote Schemas.ts to use @type decorators (the only officially supported way to register fields for state synchronization)
+- Added new schema fields: characterModel, invIron, invEmberwood, invGodshard, ResourceNodeState, StructureState, TeamVaultState
+- Updated Vite config to import from dist/ (not src/) so server and client share the SAME decorator-processed class definitions
+- Fixed loadContent.ts content directory resolution (was broken when running from built dist/)
+- Rewrote GameRoom with:
+  - Faction-based colors (Solari=0xe07b3a orange, Lunari=0x4a90e2 blue)
+  - Per-sessionId inventory (no shared state between players)
+  - Character model selection (12 Kenney GLB models)
+  - O(1) sessionIdByPlayer Map for reverse lookup
+  - model_swap message handler
+  - ping/pong for latency measurement
+  - Per-faction TeamVaultState initialization
+- Added NameTag system (packages/engine/src/renderer/NameTag.ts):
+  - THREE.Sprite billboard that always faces camera
+  - CanvasTexture redrawn only when name/HP/relationship changes (not every frame)
+  - Color coding: self=green, ally=blue, enemy=red
+  - HP bar with color gradient (green>50%, yellow>25%, red)
+- Upgraded AssetLoader with:
+  - Per-pack texture routing (LoadingManager.setURLModifier)
+  - SkinnedMesh → Mesh conversion (Kenney characters use skinned meshes)
+  - Material normalization to MeshStandardMaterial for tint support
+  - applyTint() for faction-based coloring
+  - CharacterModelLoader class with 12 model options
+- Added DebugOverlay (packages/engine/src/ui/DebugOverlay.ts):
+  - F3 toggles visibility
+  - Shows FPS, tick rate, entity count, ping, players visible
+  - Local player state (position, HP, inventory, class, model)
+  - Engine log lines (last 5)
+- Created LoginScreen with name input, class selection (3 buttons), model selection (12 buttons grid)
+- Rewrote client main.ts to wire everything together:
+  - LoginScreen → NetworkSystem with join options
+  - Async GLB model loading with placeholder capsule
+  - NameTag attached to each player mesh
+  - Model swap detection (reloads GLB when player changes model)
+  - DebugOverlay with live stats
+- Updated NetworkSystem for Colyseus v3 API:
+  - Uses getDecoderStateCallbacks() for state change listeners
+  - Ping measurement via ping/pong messages
+  - Per-player state polling (no more onChange on schema instances)
+- Wrote comprehensive test (scripts/test-multiplayer-comprehensive.ts) verifying:
+  - 2 clients connect with different names/models
+  - Colors are faction-based and consistent across clients
+  - Models are correct per player
+  - Model swap propagates to other client
+  - Inventory starts at 0 for each player
+  - Movement replicates in real-time (9+ units over 1.5s)
+
+Stage Summary:
+- ✅ Multiplayer state sync WORKS (was completely broken before)
+- ✅ Faction colors consistent across clients (Alice=orange, Bob=blue on both sides)
+- ✅ Per-player inventory isolation (no shared state)
+- ✅ Character model selection (12 Kenney GLB models)
+- ✅ Model swap propagation
+- ✅ NameTag billboards with faction-colored name + HP bar
+- ✅ DebugOverlay with F3 toggle, live stats, ping
+- ✅ All packages typecheck cleanly
+- ✅ Vite dev server boots and serves assets correctly
+- ✅ Comprehensive test passes all assertions
+- Ready for live playtest with 2 browser tabs

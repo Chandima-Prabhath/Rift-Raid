@@ -29,6 +29,6 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@colyseus/schema": "^2.0.4"
+    "@colyseus/schema": "3.0.76"
   }
 }

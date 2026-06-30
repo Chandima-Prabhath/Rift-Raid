@@ -11,15 +11,16 @@
     "packages/client"
   ],
   "scripts": {
-    "dev": "concurrently -n server,client -c blue,green \"bun run dev:server\" \"bun run dev:client\"",
-    "dev:server": "bun --filter='@rift-and-raid/server' run dev",
-    "dev:client": "bun --filter='@rift-and-raid/client' run dev",
-    "build": "bun run build:shared && bun run build:engine && bun run build:game && bun run build:server",
+    "dev": "bun run build:deps && concurrently -n shared,engine,game,server,client -c magenta,cyan,yellow,blue,green \"tsc -b --watch packages/shared packages/engine packages/game\" \"bun run dev:server\" \"bun run dev:client\"",
+    "dev:server": "bun --watch packages/server/src/index.ts",
+    "dev:client": "vite --host",
+    "build:deps": "bun run build:shared && bun run build:engine && bun run build:game",
     "build:shared": "bun --filter='@rift-and-raid/shared' run build",
     "build:engine": "bun --filter='@rift-and-raid/engine' run build",
     "build:game": "bun --filter='@rift-and-raid/game' run build",
     "build:server": "bun --filter='@rift-and-raid/server' run build",
     "build:client": "bun --filter='@rift-and-raid/client' run build",
+    "build": "bun run build:deps && bun run build:server",
     "typecheck": "bun run typecheck:shared && bun run typecheck:engine && bun run typecheck:game && bun run typecheck:server",
     "typecheck:shared": "bun --filter='@rift-and-raid/shared' run typecheck",
     "typecheck:engine": "bun --filter='@rift-and-raid/engine' run typecheck",
@@ -27,20 +28,22 @@
     "typecheck:server": "bun --filter='@rift-and-raid/server' run typecheck",
     "test": "bun run test:smoke",
     "test:smoke": "bun tests/ecs-smoke.mjs",
+    "test:schema": "bun scripts/test-schema.ts",
+    "test:multiplayer": "bun scripts/test-multiplayer-full.ts",
     "clean": "rm -rf packages/*/dist packages/*/node_modules node_modules"
   },
   "devDependencies": {
-    "@colyseus/core": "0.15.57",
-    "@colyseus/monitor": "0.15.8",
-    "@colyseus/schema": "2.0.9",
+    "@colyseus/core": "0.16.22",
+    "@colyseus/monitor": "0.16.7",
+    "@colyseus/schema": "3.0.76",
     "@colyseus/tools": "^0.17.19",
     "concurrently": "^9.1.0",
     "typescript": "^5.6.3"
   },
   "dependencies": {
-    "@colyseus/ws-transport": "0.15.3",
+    "@colyseus/ws-transport": "0.16.5",
     "@types/express": "^5.0.6",
-    "colyseus.js": "0.15.28",
+    "colyseus.js": "0.16.22",
     "express": "^5.2.1",
     "ws": "^8.21.0"
   }

@@ -1,20 +1,32 @@
 /**
- * Rift & Raid — Client NetworkSystem (Phase 3)
+ * Rift & Raid — Client NetworkSystem (Colyseus 0.16 + schema v3)
  *
  * Bridges between:
  *   - Network state (Colyseus schema) → local ECS
  *   - Local player input → Colyseus messages
  *
- * Phase 3 additions:
- *   - Sends attack + ability messages to server (server-authoritative combat)
- *   - Spawns/destroys projectile meshes from server ProjectileState
- *   - Handles death/respawn visual state (hide mesh when dead)
- *   - Forwards kill feed events for UI
+ * v3 API notes:
+ *   - State callbacks (onChange, onAdd, onRemove) are accessed via a proxy
+ *     returned by getDecoderStateCallbacks(room). We use this to register
+ *     listeners on the players MapSchema.
+ *   - State mutations are read by polling room.state directly each frame
+ *     (the proxy callbacks fire on decode, updating the underlying state).
+ *
+ * Phase 4 additions:
+ *   - Per-player state isolation (each PlayerState carries its own inventory)
+ *   - Faction-based colors (Solari=orange, Lunari=blue)
+ *   - Character model selection (model_swap message)
+ *   - Ping measurement (round-trip a 'ping' message every 1s)
  */
 
 import { Client, Room } from 'colyseus.js';
+import { getDecoderStateCallbacks } from '@colyseus/schema';
 import type * as THREE from 'three';
-import type { GameState, PlayerState as SharedPlayerState, ProjectileState as SharedProjectileState } from '@rift-and-raid/shared';
+import type {
+  GameState,
+  PlayerState as SharedPlayerState,
+  ProjectileState as SharedProjectileState,
+} from '@rift-and-raid/shared';
 import {
   CLASS_STATS,
   COMBAT,
@@ -34,39 +46,26 @@ import {
 } from '@rift-and-raid/game';
 import type { InputState } from '@rift-and-raid/engine';
 
-// Client-side state types.
-type ClientPlayerState = SharedPlayerState & {
-  onChange(cb: () => void): void;
-};
-type ClientProjectileState = SharedProjectileState & {
-  onChange(cb: () => void): void;
-};
-interface ClientPlayersMap {
-  onAdd(cb: (player: ClientPlayerState, sessionId: string) => void, immediate?: boolean): () => void;
-  onRemove(cb: (player: ClientPlayerState, sessionId: string) => void): void;
-  get(sessionId: string): ClientPlayerState | undefined;
-  forEach(cb: (player: ClientPlayerState, sessionId: string) => void): void;
-  size: number;
-}
-interface ClientProjectilesMap {
-  onAdd(cb: (proj: ClientProjectileState, projId: string) => void, immediate?: boolean): () => void;
-  onRemove(cb: (proj: ClientProjectileState, projId: string) => void): void;
-  get(projId: string): ClientProjectileState | undefined;
-  forEach(cb: (proj: ClientProjectileState, projId: string) => void): void;
-  size: number;
-}
-type ClientGameState = {
-  players: ClientPlayersMap;
-  projectiles: ClientProjectilesMap;
-  tick: number;
-  worldTime: number;
-};
+// ============================================================================
+// Types
+// ============================================================================
 
 export interface NetworkSystemCallbacks {
   /** Spawn a 3D mesh for a player. */
-  onPlayerSpawn: (entity: Entity, sessionId: string, isLocal: boolean, color: number) => unknown;
+  onPlayerSpawn: (entity: Entity, sessionId: string, isLocal: boolean, color: number, characterModel: string) => unknown;
   /** Update a player's mesh (position/rotation/color/visibility). */
-  onPlayerUpdate: (entity: Entity, x: number, y: number, z: number, rotation: number, color: number, alive: boolean, hp: number, maxHp: number) => void;
+  onPlayerUpdate: (
+    entity: Entity,
+    x: number, y: number, z: number,
+    rotation: number,
+    color: number,
+    alive: boolean,
+    hp: number,
+    maxHp: number,
+    characterModel: string,
+    name: string,
+    faction: string,
+  ) => void;
   /** Remove a player's mesh when they disconnect. */
   onPlayerLeave: (entity: Entity, sessionId: string) => void;
   /** Spawn a projectile mesh. */
@@ -83,11 +82,16 @@ export interface NetworkSystemCallbacks {
   onConnectionStateChange: (state: string) => void;
 }
 
+// ============================================================================
+// NetworkSystem
+// ============================================================================
+
 export class NetworkSystem {
   private client: Client | null = null;
-  private room: Room<ClientGameState> | null = null;
+  private room: Room<GameState> | null = null;
   private world: World;
   private serverUrl: string;
+  private joinOptions: { name?: string; characterModel?: string; characterClass?: CharacterClass };
   private callbacks: NetworkSystemCallbacks;
   private getInput: () => InputState;
   private localSessionId: string | null = null;
@@ -95,20 +99,26 @@ export class NetworkSystem {
   private sessionIdByEntity = new Map<Entity, string>();
   private inputSequence = 0;
   private lastInputSendAt = 0;
-  private lastAttackHeld = false;
   private lastAbilityPressed = false;
   private readonly INPUT_SEND_INTERVAL_MS = 50; // 20Hz
+
+  // Ping measurement
+  private ping = 0;
+  private lastPingSentAt = 0;
+  private pingSequence = 0;
 
   constructor(
     world: World,
     serverUrl: string,
     getInput: () => InputState,
-    callbacks: NetworkSystemCallbacks
+    callbacks: NetworkSystemCallbacks,
+    joinOptions: { name?: string; characterModel?: string; characterClass?: CharacterClass } = {},
   ) {
     this.world = world;
     this.serverUrl = serverUrl;
     this.getInput = getInput;
     this.callbacks = callbacks;
+    this.joinOptions = joinOptions;
   }
 
   async connect(): Promise<void> {
@@ -116,7 +126,7 @@ export class NetworkSystem {
     this.callbacks.onConnectionStateChange('connecting');
 
     try {
-      this.room = await this.client.joinOrCreate<ClientGameState>('rift-raid');
+      this.room = await this.client.joinOrCreate<GameState>('rift-raid', this.joinOptions);
       this.localSessionId = this.room.sessionId;
       this.callbacks.onConnectionStateChange('connected');
       console.log(`[Network] Connected. sessionId=${this.localSessionId}`);
@@ -146,12 +156,50 @@ export class NetworkSystem {
     return this.entityBySessionId.get(this.localSessionId) ?? null;
   }
 
+  get localSession(): string | null {
+    return this.localSessionId;
+  }
+
+  get currentPing(): number {
+    return this.ping;
+  }
+
+  get playersVisible(): number {
+    return this.entityBySessionId.size;
+  }
+
+  get projectilesVisible(): number {
+    return this.room?.state.projectiles.size ?? 0;
+  }
+
   sendClassSwap(characterClass: CharacterClass): void {
     this.room?.send('class_swap', { characterClass });
   }
 
+  sendModelSwap(characterModel: string): void {
+    this.room?.send('model_swap', { characterModel });
+  }
+
   sendChat(text: string): void {
     this.room?.send('chat', { text });
+  }
+
+  /** Get the local player's PlayerState (read from room.state). */
+  getLocalPlayerState(): SharedPlayerState | null {
+    if (!this.room || !this.localSessionId) return null;
+    return this.room.state.players.get(this.localSessionId) ?? null;
+  }
+
+  /** Get a remote player's PlayerState by sessionId. */
+  getPlayerState(sessionId: string): SharedPlayerState | null {
+    if (!this.room) return null;
+    return this.room.state.players.get(sessionId) ?? null;
+  }
+
+  /** Iterate all player states. */
+  forEachPlayer(cb: (player: SharedPlayerState, sessionId: string) => void): void {
+    if (!this.room) return;
+    this.room.state.players.forEach((p, sid) => cb(p, sid));
   }
 
   // --------------------------------------------------------------------------
@@ -163,57 +211,58 @@ export class NetworkSystem {
 
     const input = this.getInput();
 
-    // Check attack + ability every frame (edge-triggered).
     this.checkAttackInput();
     this.checkAbilityInput(input);
 
     const now = performance.now();
-    if (now - this.lastInputSendAt < this.INPUT_SEND_INTERVAL_MS) {
-      return;
-    }
-    this.lastInputSendAt = now;
+    if (now - this.lastInputSendAt >= this.INPUT_SEND_INTERVAL_MS) {
+      this.lastInputSendAt = now;
+      this.inputSequence++;
 
-    this.inputSequence++;
+      this.room.send('move', {
+        sequence: this.inputSequence,
+        moveX: input.move.x,
+        moveZ: input.move.y,
+        aimX: input.aim.x,
+        aimZ: input.aim.y,
+        sprint: input.sprintHeld,
+      });
 
-    this.room.send('move', {
-      sequence: this.inputSequence,
-      moveX: input.move.x,
-      moveZ: input.move.y,
-      aimX: input.aim.x,
-      aimZ: input.aim.y,
-      sprint: input.sprintHeld,
-    });
-
-    // Dash.
-    if (input.dashPressed) {
-      const hasInput = Math.hypot(input.move.x, input.move.y) > 0.1;
-      if (hasInput) {
-        this.room.send('dash', { directionX: input.move.x, directionZ: input.move.y });
-      } else {
-        const localEntity = this.localPlayerEntity;
-        if (localEntity) {
-          const t = this.world.getComponent(localEntity, TransformComponent);
-          if (t) {
-            this.room.send('dash', {
-              directionX: Math.sin(t.rotation),
-              directionZ: Math.cos(t.rotation),
-            });
+      if (input.dashPressed) {
+        const hasInput = Math.hypot(input.move.x, input.move.y) > 0.1;
+        if (hasInput) {
+          this.room.send('dash', { directionX: input.move.x, directionZ: input.move.y });
+        } else {
+          const localEntity = this.localPlayerEntity;
+          if (localEntity) {
+            const t = this.world.getComponent(localEntity, TransformComponent);
+            if (t) {
+              this.room.send('dash', {
+                directionX: Math.sin(t.rotation),
+                directionZ: Math.cos(t.rotation),
+              });
+            }
           }
         }
       }
+    }
+
+    // Ping measurement (every 1s).
+    if (now - this.lastPingSentAt >= 1000) {
+      this.lastPingSentAt = now;
+      this.pingSequence++;
+      this.room.send('ping', { seq: this.pingSequence, t: Date.now() });
     }
   }
 
   private checkAttackInput(): void {
     const input = this.getInput();
-    // Send attack on press edge AND while held (server enforces cooldown).
     if (input.attackPressed || input.attackHeld) {
       this.room?.send('attack', { aimX: input.aim.x, aimZ: input.aim.y });
     }
   }
 
   private checkAbilityInput(input: InputState): void {
-    // Ability — edge-triggered (only on press, not hold).
     if (input.abilityPressed && !this.lastAbilityPressed) {
       const localEntity = this.localPlayerEntity;
       if (localEntity) {
@@ -224,7 +273,6 @@ export class NetworkSystem {
             aimX: input.aim.x,
             aimZ: input.aim.y,
           });
-          console.log(`[Network] Sent ability: ${playerComp.abilityId}`);
         }
       }
     }
@@ -232,26 +280,38 @@ export class NetworkSystem {
   }
 
   // --------------------------------------------------------------------------
-  // State listeners
+  // State listeners (v3 API)
   // --------------------------------------------------------------------------
 
   private setupStateListeners(): void {
     if (!this.room) return;
-    const players = this.room.state.players;
-    const projectiles = this.room.state.projectiles;
 
-    players.onAdd((player: ClientPlayerState, sessionId: string) => {
+    // v3: get the callback proxy from the room's decoder.
+    const callbacks = getDecoderStateCallbacks((this.room as any)['serializer'].decoder);
+
+    // Players — onAdd fires when a new player joins (or initial state sync).
+    callbacks(this.room.state).players.onAdd((player: SharedPlayerState, sessionId: string) => {
       const isLocal = sessionId === this.localSessionId;
       const entity = this.spawnPlayerEntity(player, isLocal);
       this.entityBySessionId.set(sessionId, entity);
       this.sessionIdByEntity.set(entity, sessionId);
-      this.callbacks.onPlayerSpawn(entity, sessionId, isLocal, player.color);
-      console.log(`[Network] Player ${player.name} (${sessionId}) ${isLocal ? '[LOCAL]' : '[REMOTE]'} spawned`);
 
-      player.onChange(() => this.syncPlayerToEntity(entity, player));
+      this.callbacks.onPlayerSpawn(
+        entity, sessionId, isLocal,
+        player.color, player.characterModel,
+      );
+      console.log(
+        `[Network] Player ${player.name} (${sessionId.slice(0, 8)}) ` +
+        `${isLocal ? '[LOCAL]' : '[REMOTE]'} spawned — model=${player.characterModel} color=0x${player.color.toString(16)}`
+      );
+
+      // Listen for changes on this player.
+      callbacks(player).onChange(() => {
+        this.syncPlayerToEntity(entity, player);
+      });
     });
 
-    players.onRemove((_player: ClientPlayerState, sessionId: string) => {
+    callbacks(this.room.state).players.onRemove((_player: SharedPlayerState, sessionId: string) => {
       const entity = this.entityBySessionId.get(sessionId);
       if (entity !== undefined) {
         this.callbacks.onPlayerLeave(entity, sessionId);
@@ -259,26 +319,33 @@ export class NetworkSystem {
         this.entityBySessionId.delete(sessionId);
         this.sessionIdByEntity.delete(entity);
       }
-      console.log(`[Network] Player ${sessionId} left`);
+      console.log(`[Network] Player ${sessionId.slice(0, 8)} left`);
     });
 
-    // Projectile lifecycle.
-    projectiles.onAdd((proj: ClientProjectileState, projId: string) => {
+    // Projectiles — onAdd spawns the mesh, onRemove destroys it.
+    // Position updates are polled each frame in update() via forEach.
+    callbacks(this.room.state).projectiles.onAdd((proj: SharedProjectileState, projId: string) => {
       this.callbacks.onProjectileSpawn(projId, proj.x, proj.y, proj.z, proj.color);
     });
 
-    projectiles.onRemove((_proj: ClientProjectileState, projId: string) => {
+    callbacks(this.room.state).projectiles.onRemove((_proj: SharedProjectileState, projId: string) => {
       this.callbacks.onProjectileDestroy(projId);
     });
   }
 
   private setupMessageHandlers(): void {
     if (!this.room) return;
+
     this.room.onMessage('chat', (payload) => {
       this.callbacks.onChat(payload);
     });
+
     this.room.onMessage('kill', (payload: { victimName: string; killerName: string; timestamp: number }) => {
       this.callbacks.onKill(payload.victimName, payload.killerName);
+    });
+
+    this.room.onMessage('pong', (payload: { seq: number; t: number }) => {
+      this.ping = Date.now() - payload.t;
     });
   }
 
@@ -286,7 +353,7 @@ export class NetworkSystem {
   // Entity management
   // --------------------------------------------------------------------------
 
-  private spawnPlayerEntity(player: ClientPlayerState, isLocal: boolean): Entity {
+  private spawnPlayerEntity(player: SharedPlayerState, isLocal: boolean): Entity {
     const entity = this.world.createEntity();
 
     const transform = this.world.addComponent(entity, new TransformComponent());
@@ -302,25 +369,29 @@ export class NetworkSystem {
     health.current = player.hp;
 
     const faction = this.world.addComponent(entity, new FactionComponent());
-    faction.faction = player.faction;
+    faction.faction = player.faction as 'solari' | 'lunari';
 
     const playerComp = this.world.addComponent(entity, new PlayerComponent());
     playerComp.playerId = isLocal ? 'local' : 'remote';
-    playerComp.characterClass = player.characterClass;
-    playerComp.faction = player.faction;
+    playerComp.characterClass = player.characterClass as CharacterClass;
+    playerComp.faction = player.faction as 'solari' | 'lunari';
     playerComp.abilityId = player.abilityId || null;
     playerComp.spawnProtectionMs = 0;
+    // Per-player inventory (mirrored from server state for HUD display).
+    playerComp.inventory.iron = player.invIron;
+    playerComp.inventory.emberwood = player.invEmberwood;
+    playerComp.inventory.godshard = player.invGodshard;
 
     const combat = this.world.addComponent(entity, new CombatTargetComponent());
     combat.attackable = !isLocal;
-    combat.faction = player.faction;
+    combat.faction = player.faction as 'solari' | 'lunari';
 
     this.world.addComponent(entity, new HealthBarComponent()).targetEntity = entity;
 
     return entity;
   }
 
-  private syncPlayerToEntity(entity: Entity, player: ClientPlayerState): void {
+  private syncPlayerToEntity(entity: Entity, player: SharedPlayerState): void {
     const transform = this.world.getComponent(entity, TransformComponent);
     const health = this.world.getComponent(entity, HealthComponent);
     const playerComp = this.world.getComponent(entity, PlayerComponent);
@@ -337,23 +408,30 @@ export class NetworkSystem {
     }
     if (playerComp) {
       if (playerComp.characterClass !== player.characterClass) {
-        playerComp.characterClass = player.characterClass;
-        const stats = CLASS_STATS[player.characterClass];
+        playerComp.characterClass = player.characterClass as CharacterClass;
+        const stats = CLASS_STATS[playerComp.characterClass];
         if (health && stats) health.max = stats.hp;
       }
       playerComp.abilityId = player.abilityId || null;
+      playerComp.inventory.iron = player.invIron;
+      playerComp.inventory.emberwood = player.invEmberwood;
+      playerComp.inventory.godshard = player.invGodshard;
     }
 
     this.callbacks.onPlayerUpdate(
       entity,
-      player.x,
-      player.y,
-      player.z,
+      player.x, player.y, player.z,
       player.rotation,
       player.color,
       player.alive,
       player.hp,
-      player.maxHp
+      player.maxHp,
+      player.characterModel,
+      player.name,
+      player.faction,
     );
   }
 }
+
+// Re-export THREE here so consumers don't need to import three directly.
+export type { THREE };

@@ -1,15 +1,17 @@
 /**
- * Rift & Raid — Client entry point (Phase 3 prototype)
+ * Rift & Raid — Client entry point
  *
- * Networked combat + abilities:
- *   - Attacks + abilities sent to server (server-authoritative)
- *   - Projectiles spawned from server state (not locally)
- *   - Death overlay shows when killed, respawn timer counts down
- *   - Kill feed shows recent kills
- *   - Dummies still local-only (Phase 4 moves them to server)
+ * Wires up:
+ *   - LoginScreen (name + class + model selection)
+ *   - SceneManager + ModelRenderer + AssetLoader + CharacterModelLoader
+ *   - InputManager (keyboard/mouse + virtual joystick)
+ *   - NetworkSystem (Colyseus client, v3 API)
+ *   - Game systems (movement, combat, health, dummy, damage numbers)
+ *   - HUD, Chat, KillFeed, DeathOverlay, DebugOverlay
+ *   - NameTag billboards (faction-colored name + HP bar above each player)
  *
- * Phase 3 success criteria (per GDD §10):
- *   "Can kill each other, abilities fire on cooldown, respawns work"
+ * The client is server-authoritative for ALL gameplay state. Local systems
+ * only handle input mapping, dummy combat (PvE), and visual interpolation.
  */
 
 import * as THREE from 'three';
@@ -22,7 +24,8 @@ import {
   CameraController,
   MaterialSystem,
   ModelRenderer,
-  Palette,
+  AssetLoader,
+  CharacterModelLoader,
   ContentRegistry,
   InputManager,
   KeyboardMouse,
@@ -30,6 +33,9 @@ import {
   TransformComponent,
   HealthComponent,
   HUD,
+  NameTag,
+  DebugOverlay,
+  Palette,
 } from '@rift-and-raid/engine';
 import { loadAllContent } from '@rift-and-raid/game';
 import {
@@ -56,8 +62,13 @@ import { NetworkSystem } from './NetworkSystem.js';
 import { ChatUI } from './ChatUI.js';
 import { DeathOverlay } from './DeathOverlay.js';
 import { KillFeed } from './KillFeed.js';
+import { LoginScreen } from './LoginScreen.js';
 
-const boot = document.getElementById('boot')!;
+// ============================================================================
+// Boot sequence
+// ============================================================================
+
+const boot = document.getElementById('boot');
 const SERVER_URL = new URLSearchParams(window.location.search).get('server')
   ?? 'ws://localhost:2567';
 
@@ -67,23 +78,40 @@ const COLOR_BY_CLASS: Record<CharacterClass, number> = {
   mage: 0x9050c0,
 };
 
+interface PlayerVisual {
+  mesh: THREE.Group;
+  nameTag: NameTag;
+  /** Last-applied characterModel — used to detect model swaps. */
+  currentModelId: string | null;
+  /** True if the model GLB is still loading (we apply tint after load). */
+  modelLoading: boolean;
+}
+
 async function main() {
-  // 1. Engine kernel
+  // ── 1. Login screen ────────────────────────────────────────────────────
+  const login = new LoginScreen();
+  const loginOpts = await login.show();
+  login.hide();
+  setTimeout(() => login.dispose(), 500);
+
+  // ── 2. Engine kernel ───────────────────────────────────────────────────
   const world = new World();
   const eventBus = new EventBus();
 
-  // 2. Content
+  // ── 3. Content ─────────────────────────────────────────────────────────
   const content = new ContentRegistry();
   await loadAllContent(content);
   console.log(content.summary());
 
-  // 3. Renderer
+  // ── 4. Renderer + assets ───────────────────────────────────────────────
   const sceneManager = new SceneManager({ antialias: true });
   const materialSystem = new MaterialSystem();
   const modelRenderer = new ModelRenderer(materialSystem);
   const cameraController = new CameraController(sceneManager);
+  const assetLoader = new AssetLoader();
+  const characterLoader = new CharacterModelLoader(assetLoader);
 
-  // 4. Ground + base markers
+  // ── 5. World geometry ──────────────────────────────────────────────────
   const ground = modelRenderer.createGround(WORLD_SIZE.width, WORLD_SIZE.depth, Palette.grass);
   ground.position.z = -WORLD_SIZE.depth / 2;
   sceneManager.scene.add(ground);
@@ -96,7 +124,7 @@ async function main() {
   lunariBase.position.set(80, 0.1, -40);
   sceneManager.scene.add(lunariBase);
 
-  // 5. Dummies (local-only in Phase 3)
+  // ── 6. Local dummies (PvE training) ────────────────────────────────────
   const dummyPositions = [
     { x: 0, y: 0, z: -35 },
     { x: -4, y: 0, z: -32 },
@@ -109,7 +137,7 @@ async function main() {
     sceneManager.attachObject(dummyEntity, dummyMesh);
   }
 
-  // 6. Input
+  // ── 7. Input ───────────────────────────────────────────────────────────
   const inputManager = new InputManager();
   const keyboardMouse = new KeyboardMouse();
   const virtualJoystick = new VirtualJoystick();
@@ -117,47 +145,121 @@ async function main() {
   inputManager.addAdapter(virtualJoystick);
   inputManager.attach();
 
-  // 7. HUD + chat + death overlay + kill feed
+  // ── 8. UI overlays ─────────────────────────────────────────────────────
   const hud = new HUD();
   const deathOverlay = new DeathOverlay();
   const killFeed = new KillFeed();
+  const debugOverlay = new DebugOverlay();
   let chatUI: ChatUI | null = null;
 
-  // 8. Track meshes
-  const playerMeshes = new Map<number, THREE.Group>();
+  // ── 9. Per-entity visual tracking ──────────────────────────────────────
+  const playerVisuals = new Map<number, PlayerVisual>();
   const projectileMeshes = new Map<string, THREE.Mesh>();
-  const localProjectileMeshes = new Map<number, THREE.Mesh>(); // for local dummy combat
+  const localProjectileMeshes = new Map<number, THREE.Mesh>();
 
-  // 9. Network system
+  // ── 10. Network system ─────────────────────────────────────────────────
   const network = new NetworkSystem(
     world,
     SERVER_URL,
     () => inputManager.getState(),
     {
-      onPlayerSpawn: (entity, _sessionId, isLocal, color) => {
+      onPlayerSpawn: async (entity, _sessionId, isLocal, color, characterModel) => {
+        // Start with a placeholder capsule. The GLB loads async.
         const mesh = modelRenderer.createCapsule(color);
-        const transform = world.getComponent(entity, TransformComponent);
-        if (transform) {
-          mesh.position.set(transform.x, transform.y, transform.z);
-        }
         sceneManager.attachObject(entity, mesh);
-        playerMeshes.set(entity, mesh);
+
+        const nameTag = new NameTag();
+        mesh.add(nameTag.sprite);
+
+        playerVisuals.set(entity, {
+          mesh,
+          nameTag,
+          currentModelId: null,
+          modelLoading: true,
+        });
+
         if (isLocal) {
           cameraController.follow(entity);
           console.log(`[Client] Local player entity ${entity}, camera following`);
         }
+
+        // Async-load the GLB model and replace the capsule.
+        try {
+          const model = await characterLoader.load(characterModel);
+          characterLoader.applyFactionTint(model, color);
+
+          // Replace capsule children with the model (keep the name tag).
+          const vis = playerVisuals.get(entity);
+          if (vis) {
+            // Remove old capsule body (but keep name tag + group transform).
+            while (mesh.children.length > 0) {
+              const child = mesh.children[0];
+              if (child === nameTag.sprite) break;
+              mesh.remove(child);
+            }
+            mesh.add(model);
+            vis.currentModelId = characterModel;
+            vis.modelLoading = false;
+          }
+        } catch (err) {
+          console.error(`[Client] Failed to load model ${characterModel}:`, err);
+          const vis = playerVisuals.get(entity);
+          if (vis) vis.modelLoading = false;
+        }
       },
-      onPlayerUpdate: (entity, x, y, z, rotation, _color, alive, _hp, _maxHp) => {
-        const mesh = playerMeshes.get(entity);
-        if (mesh) {
-          mesh.position.set(x, y, z);
-          mesh.rotation.y = rotation;
-          mesh.visible = alive;
+      onPlayerUpdate: (
+        entity, x, y, z, rotation, _color, alive, hp, maxHp,
+        characterModel, name, faction,
+      ) => {
+        const vis = playerVisuals.get(entity);
+        if (vis) {
+          vis.mesh.position.set(x, y, z);
+          vis.mesh.rotation.y = rotation;
+          vis.mesh.visible = alive;
+
+          // Update name tag with current state.
+          const localEntity = network.localPlayerEntity;
+          const isLocal = entity === localEntity;
+          const localFaction = localEntity !== null
+            ? (world.getComponent(localEntity, PlayerComponent)?.faction ?? 'solari')
+            : 'solari';
+          vis.nameTag.update({
+            name,
+            faction: faction as 'solari' | 'lunari',
+            hp,
+            maxHp,
+            isLocal,
+            localFaction: localFaction as 'solari' | 'lunari',
+          });
+
+          // Handle model swap (player changed their character model).
+          if (vis.currentModelId !== characterModel && !vis.modelLoading) {
+            vis.modelLoading = true;
+            characterLoader.load(characterModel).then((model) => {
+              characterLoader.applyFactionTint(model, _color);
+              // Remove old model child (keep name tag).
+              while (vis.mesh.children.length > 0) {
+                const child = vis.mesh.children[0];
+                if (child === vis.nameTag.sprite) break;
+                vis.mesh.remove(child);
+              }
+              vis.mesh.add(model);
+              vis.currentModelId = characterModel;
+              vis.modelLoading = false;
+            }).catch((err) => {
+              console.error(`[Client] Model swap failed:`, err);
+              vis.modelLoading = false;
+            });
+          }
         }
       },
       onPlayerLeave: (entity, _sessionId) => {
+        const vis = playerVisuals.get(entity);
+        if (vis) {
+          vis.nameTag.dispose();
+        }
         sceneManager.detachObject(entity);
-        playerMeshes.delete(entity);
+        playerVisuals.delete(entity);
       },
       onProjectileSpawn: (projId, x, y, z, color) => {
         const geo = new THREE.SphereGeometry(0.3, 8, 6);
@@ -180,15 +282,11 @@ async function main() {
           projectileMeshes.delete(projId);
         }
       },
-      onChat: (payload) => {
-        chatUI?.addMessage(payload);
-      },
-      onKill: (victimName, killerName) => {
-        killFeed.addKill(victimName, killerName);
-      },
+      onChat: (payload) => chatUI?.addMessage(payload),
+      onKill: (victimName, killerName) => killFeed.addKill(victimName, killerName),
       onConnectionStateChange: (state) => {
         console.log(`[Client] Network: ${state}`);
-        if (state === 'error') {
+        if (state === 'error' && boot) {
           boot.innerHTML = `<div style="color:#f44;padding:20px;font-family:sans-serif;">
             <h2>Cannot connect to server</h2>
             <p>Make sure the server is running: <code>bun run dev:server</code></p>
@@ -197,32 +295,28 @@ async function main() {
           </div>`;
         }
       },
-    }
+    },
+    {
+      name: loginOpts.name,
+      characterClass: loginOpts.characterClass,
+      characterModel: loginOpts.characterModel,
+    },
   );
 
   chatUI = new ChatUI((text) => network.sendChat(text));
 
-  // 10. Systems — note: CombatSystem + ProjectileSystem only handle local
-  //     dummy combat now. PvP combat goes through the server.
+  // ── 11. Game systems ───────────────────────────────────────────────────
   const systems = [
     new ClassSelectSystem(content, {
       onClassChange: (entity, newClass, color) => {
-        const mesh = sceneManager.getObject(entity);
-        if (mesh) {
-          mesh.traverse((child) => {
-            const m = child as THREE.Mesh;
-            if (m.geometry instanceof THREE.CapsuleGeometry) {
-              m.material = materialSystem.flat(color);
-            }
-          });
-        }
+        // For local player, send class swap to server. Server will broadcast
+        // the new class which triggers model tint update via onPlayerUpdate.
         network.sendClassSwap(newClass);
-        const stats = CLASS_STATS[newClass];
-        console.log(`[Class] swapped to ${newClass} (HP ${stats.hp}, speed ${stats.moveSpeed})`);
+        console.log(`[Class] swapped to ${newClass}`);
+        void entity; void color;
       },
     }),
     new MovementSystem(() => inputManager.getState()),
-    // Local combat system — only for dummies (PvE). PvP is server-authoritative.
     new CombatSystem(content, () => inputManager.getState(), (entity, proj) => {
       const geo = new THREE.SphereGeometry(proj.radius, 8, 6);
       const mat = new THREE.MeshBasicMaterial({ color: proj.color });
@@ -252,11 +346,7 @@ async function main() {
       },
     }),
     new HealthSystem(eventBus, {
-      onPlayerDeath: (entity) => {
-        // Local player death is handled by network state (server sets alive=false).
-        // The HealthSystem's local respawn logic is for dummies only.
-        console.log(`[Player] ${entity} died (local)`);
-      },
+      onPlayerDeath: (entity) => console.log(`[Player] ${entity} died (local)`),
       onPlayerRespawn: (entity) => console.log(`[Player] ${entity} respawned (local)`),
       onDummyDeath: (entity) => {
         const mesh = sceneManager.getObject(entity);
@@ -280,7 +370,7 @@ async function main() {
 
   for (const sys of systems) sys.init?.(world);
 
-  // 11. Mouse aim
+  // ── 12. Mouse aim (project to ground plane) ────────────────────────────
   let mouseNDC = { x: 0, y: 0 };
   window.addEventListener('mousemove', (e) => {
     mouseNDC.x = (e.clientX / window.innerWidth) * 2 - 1;
@@ -303,10 +393,53 @@ async function main() {
     }
   }
 
-  // 12. Track previous alive state to detect death/respawn transitions
+  // ── 13. Death state tracking ───────────────────────────────────────────
   let wasLocalAlive = true;
 
-  // 13. Game loop
+  // ── 14. Debug overlay data source ──────────────────────────────────────
+  const debugLogLines: string[] = [];
+  function pushDebugLog(line: string): void {
+    debugLogLines.push(`[${new Date().toLocaleTimeString()}] ${line}`);
+    if (debugLogLines.length > 20) debugLogLines.shift();
+  }
+  debugOverlay.setSource({
+    getStats: () => {
+      const localEntity = network.localPlayerEntity;
+      const playerState = network.getLocalPlayerState();
+      let localPlayer: any = null;
+      if (playerState) {
+        localPlayer = {
+          name: playerState.name,
+          faction: playerState.faction,
+          characterClass: playerState.characterClass,
+          characterModel: playerState.characterModel,
+          x: playerState.x,
+          y: playerState.y,
+          z: playerState.z,
+          rotation: playerState.rotation,
+          hp: playerState.hp,
+          maxHp: playerState.maxHp,
+          invIron: playerState.invIron,
+          invEmberwood: playerState.invEmberwood,
+          invGodshard: playerState.invGodshard,
+        };
+      }
+      return {
+        fps: loop.fps,
+        tickRate: loop.tickRate,
+        entityCount: world.entityCount,
+        connectionState: network.isConnected ? 'connected' : 'disconnected',
+        localSessionId: network.localSession,
+        pingMs: network.currentPing,
+        playersVisible: network.playersVisible,
+        projectilesVisible: network.projectilesVisible,
+        localPlayer,
+        logLines: debugLogLines,
+      };
+    },
+  });
+
+  // ── 15. Game loop ──────────────────────────────────────────────────────
   const loop = new GameLoop({
     update: (dt) => {
       inputManager.update(dt);
@@ -318,35 +451,30 @@ async function main() {
 
       network.update(dt);
 
-      // Sync local player mesh (server is authoritative, but local movement
-      // system also runs for responsiveness — server corrects if needed).
+      // Sync local player mesh + check death state.
       const localEntity = network.localPlayerEntity;
       if (localEntity !== null) {
         const t = world.getComponent(localEntity, TransformComponent);
-        const mesh = playerMeshes.get(localEntity);
+        const mesh = playerVisuals.get(localEntity)?.mesh;
         if (t && mesh) {
           mesh.position.set(t.x, t.y, t.z);
           mesh.rotation.y = t.rotation;
         }
 
-        // Check death state for overlay.
-        const health = world.getComponent(localEntity, HealthComponent);
-        const playerState = network['room']?.state['players'].get(network['localSessionId']!);
+        const playerState = network.getLocalPlayerState();
         if (playerState) {
           if (!playerState.alive && wasLocalAlive) {
-            // Just died.
             deathOverlay.show(COMBAT.respawnDelayMs, playerState.diedAt);
             wasLocalAlive = false;
+            pushDebugLog(`Local player died`);
           } else if (playerState.alive && !wasLocalAlive) {
-            // Respawned.
             deathOverlay.hide();
             wasLocalAlive = true;
+            pushDebugLog(`Local player respawned`);
           } else if (!playerState.alive) {
-            // Still dead — update timer.
             deathOverlay.updateTimer(COMBAT.respawnDelayMs, playerState.diedAt);
           }
         }
-        void health;
       }
 
       // Sync dummy meshes.
@@ -369,10 +497,11 @@ async function main() {
         }
       }
 
-      // HUD update.
+      // Update HUD.
       if (localEntity !== null) {
         const playerHealth = world.getComponent(localEntity, HealthComponent);
         const player = world.getComponent(localEntity, PlayerComponent);
+        const playerState = network.getLocalPlayerState();
         if (playerHealth && player) {
           hud.setStats({
             fps: loop.fps,
@@ -380,7 +509,11 @@ async function main() {
             entityCount: world.entityCount,
             playerHp: playerHealth.current,
             playerMaxHp: playerHealth.max,
-            playerResources: {
+            playerResources: playerState ? {
+              iron: playerState.invIron,
+              emberwood: playerState.invEmberwood,
+              godshard: playerState.invGodshard,
+            } : {
               iron: player.inventory.iron,
               emberwood: player.inventory.emberwood,
               godshard: player.inventory.godshard,
@@ -388,6 +521,9 @@ async function main() {
           });
         }
       }
+
+      // Update debug overlay.
+      debugOverlay.update();
 
       world.clearDirtyFlag();
       eventBus.emit(Events.WORLD_TICK, { dt });
@@ -400,21 +536,32 @@ async function main() {
 
   loop.start();
 
-  // 14. Connect to server
+  // ── 16. Connect to server ──────────────────────────────────────────────
   console.log(`[Client] Connecting to ${SERVER_URL}...`);
   network.connect().then(() => {
-    boot.classList.add('hidden');
-    setTimeout(() => boot.remove(), 500);
+    if (boot) {
+      boot.classList.add('hidden');
+      setTimeout(() => boot.remove(), 500);
+    }
+    pushDebugLog(`Connected as ${loginOpts.name}`);
   }).catch((err) => {
     console.error('[Client] Connection failed:', err);
+    pushDebugLog(`Connection failed: ${err.message}`);
+  });
+
+  // ── 17. Window resize ──────────────────────────────────────────────────
+  window.addEventListener('resize', () => {
+    // SceneManager already handles this internally.
   });
 }
 
+// ============================================================================
+// Helpers
+// ============================================================================
+
 function projectToScreen(
   sceneManager: SceneManager,
-  x: number,
-  y: number,
-  z: number
+  x: number, y: number, z: number,
 ): { x: number; y: number; visible: boolean } | null {
   const v = new THREE.Vector3(x, y, z);
   v.project(sceneManager.camera);
@@ -428,5 +575,7 @@ function projectToScreen(
 
 main().catch((err) => {
   console.error('Boot failed:', err);
-  boot.innerHTML = `<div style="color:#f44;padding:20px;">Boot failed: ${err.message}</div>`;
+  if (boot) {
+    boot.innerHTML = `<div style="color:#f44;padding:20px;">Boot failed: ${err.message}</div>`;
+  }
 });
