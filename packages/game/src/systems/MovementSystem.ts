@@ -96,12 +96,13 @@ export class MovementSystem implements System {
       transform.x = Math.max(-WORLD_SIZE.width / 2, Math.min(WORLD_SIZE.width / 2, transform.x));
       transform.z = Math.max(-WORLD_SIZE.depth, Math.min(0, transform.z));
 
-      // Facing: character faces movement direction (not aim).
-      // This feels natural for third-person — the character turns to walk.
-      // Combat (aim) is separate and doesn't override this.
+      // Facing: character faces movement direction.
+      // Kenney models face -Z by default, so we add π to the rotation
+      // to make them face the movement direction correctly.
+      // atan2(vx, vz) gives angle for +Z forward; +π converts to -Z forward.
       const moveMag = Math.hypot(velocity.x, velocity.z);
       if (moveMag > 0.1) {
-        transform.rotation = Math.atan2(velocity.x, velocity.z);
+        transform.rotation = Math.atan2(velocity.x, velocity.z) + Math.PI;
       }
 
       // Dash (instant burst, on cooldown) — also camera-relative.

@@ -263,12 +263,13 @@ export class CharacterModelLoader {
     // the caller can position/rotate the wrapper freely.
     const wrapper = new THREE.Group();
 
-    // Kenney models face -Z by default; rotate 180° to face +Z.
-    model.rotation.y = Math.PI;
+    // NOTE: We do NOT rotate the model 180° here. Kenney models face -Z
+    // by default. Our rotation system uses atan2(vx, vz) which assumes
+    // +Z is forward. We handle the offset in the rotation calculation
+    // instead (adding π to the rotation angle). This avoids double-
+    // rotation bugs when the wrapper group also gets rotated.
 
     // Auto-normalize scale to target height (1.8m).
-    // We must compute the bounding box AFTER adding to the wrapper so
-    // the wrapper's transform doesn't interfere. Use the model's local box.
     const TARGET_HEIGHT = 1.8;
     const box = new THREE.Box3().setFromObject(model);
     const size = new THREE.Vector3();
