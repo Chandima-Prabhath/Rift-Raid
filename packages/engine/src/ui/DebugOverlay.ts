@@ -95,8 +95,13 @@ export class DebugOverlay {
   /** Called every frame by the game loop. */
   update(): void {
     if (!this.isVisible || !this.source) return;
-    const stats = this.source.getStats();
-    this.container.textContent = this.format(stats);
+    try {
+      const stats = this.source.getStats();
+      this.container.textContent = this.format(stats);
+    } catch (e) {
+      // Swallow errors during early init when room.state isn't ready yet.
+      // The overlay will retry next frame.
+    }
   }
 
   private format(s: DebugStats): string {

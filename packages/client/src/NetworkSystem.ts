@@ -169,7 +169,7 @@ export class NetworkSystem {
   }
 
   get projectilesVisible(): number {
-    return this.room?.state.projectiles.size ?? 0;
+    return this.room?.state?.projectiles?.size ?? 0;
   }
 
   sendClassSwap(characterClass: CharacterClass): void {
@@ -187,19 +187,26 @@ export class NetworkSystem {
   /** Get the local player's PlayerState (read from room.state). */
   getLocalPlayerState(): SharedPlayerState | null {
     if (!this.room || !this.localSessionId) return null;
-    return this.room.state.players.get(this.localSessionId) ?? null;
+    // Guard against state.players being undefined during initial sync.
+    const players = this.room.state?.players;
+    if (!players) return null;
+    return players.get(this.localSessionId) ?? null;
   }
 
   /** Get a remote player's PlayerState by sessionId. */
   getPlayerState(sessionId: string): SharedPlayerState | null {
     if (!this.room) return null;
-    return this.room.state.players.get(sessionId) ?? null;
+    const players = this.room.state?.players;
+    if (!players) return null;
+    return players.get(sessionId) ?? null;
   }
 
   /** Iterate all player states. */
   forEachPlayer(cb: (player: SharedPlayerState, sessionId: string) => void): void {
     if (!this.room) return;
-    this.room.state.players.forEach((p, sid) => cb(p, sid));
+    const players = this.room.state?.players;
+    if (!players) return;
+    players.forEach((p, sid) => cb(p, sid));
   }
 
   // --------------------------------------------------------------------------

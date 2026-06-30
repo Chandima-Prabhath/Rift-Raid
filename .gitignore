@@ -57,3 +57,8 @@ coverage/
 
 # Asset downloads (fetched by scripts, not committed)
 packages/game/assets/downloaded/
+
+# Not part of the game project
+skills/
+upload/
+download/

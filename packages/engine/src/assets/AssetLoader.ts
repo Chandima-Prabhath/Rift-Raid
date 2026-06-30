@@ -27,8 +27,16 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
  * Kenney packs reference textures by relative filename (e.g. "colormap.png").
  * Each pack has its own colormap.png. We redirect based on the model path.
  *
- * Vite publicDir = packages/game/assets, so files are served at root:
- *   /characters/, /props/, /structures/, /textures/
+ * Texture files live at /textures/{pack}-colormap.png in the public dir:
+ *   /textures/characters-colormap.png
+ *   /textures/props-colormap.png
+ *   /textures/structures-colormap.png
+ *
+ * IMPORTANT: The URL modifier intercepts ALL URLs the GLTFLoader requests,
+ * including the .glb file itself. We MUST only redirect texture files
+ * (png/jpg/jpeg/webp/ktx2), NOT the .glb — otherwise the GLB gets
+ * redirected to /textures/... where it doesn't exist, Vite serves an
+ * HTML 404 fallback, and GLTFLoader crashes trying to JSON.parse HTML.
  */
 function buildTextureRedirect(modelUrl: string): (url: string) => string {
   // Determine which Kenney pack this model belongs to.
@@ -37,10 +45,20 @@ function buildTextureRedirect(modelUrl: string): (url: string) => string {
   else if (modelUrl.includes('/props/')) pack = 'props';
   else if (modelUrl.includes('/structures/')) pack = 'structures';
 
+  const TEXTURE_EXTS = /\.(png|jpe?g|webp|ktx2|tga|bmp|gif)$/i;
+
   return (url: string): string => {
     if (/^https?:\/\//i.test(url)) return url;
+    // Only redirect texture files. Pass through .glb, .gltf, .bin, etc.
+    if (!TEXTURE_EXTS.test(url)) return url;
     const filename = url.split('/').pop() ?? url;
-    return `/textures/${pack}/${filename}`;
+    // Kenney packs use a single colormap per pack, named {pack}-colormap.png.
+    // The GLB references it as just "colormap.png" — we prepend the pack prefix.
+    if (filename === 'colormap.png') {
+      return `/textures/${pack}-colormap.png`;
+    }
+    // Other textures: look in the textures/ dir by filename.
+    return `/textures/${filename}`;
   };
 }
 

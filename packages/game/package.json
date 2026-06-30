@@ -16,7 +16,8 @@
     }
   },
   "scripts": {
-    "build": "tsc -b",
+    "build": "tsc -b && bun run copy-content",
+    "copy-content": "cp -r src/content dist/content 2>/dev/null || true",
     "typecheck": "tsc --noEmit",
     "clean": "rm -rf dist"
   },

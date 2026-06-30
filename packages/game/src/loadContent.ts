@@ -55,14 +55,23 @@ async function collectConfigs(): Promise<
  * Vite browser path. The import.meta.glob call is statically analyzed by
  * Vite at build time and replaced with the bundled JSON modules.
  *
- * NOTE: This call MUST appear as the literal pattern `import.meta.glob(...)`
+ * NOTE: This call MUST appear as the literal pattern import.meta.glob(...)
  * for Vite's static analyzer to pick it up. Typecasts can break it, so we
  * cast the result instead of the call.
+ *
+ * The glob path is relative to THIS FILE. When the client imports the
+ * built version from packages/game/dist/loadContent.js, the path
+ * ../src/content/ (with recursive glob) resolves to packages/game/src/content/
+ * where the JSON source files live. This avoids needing to copy JSON
+ * files into dist/ during build.
+ *
+ * IMPORTANT: Do NOT put the literal glob pattern in a JSDoc comment —
+ * the star-slash sequence closes the comment early and breaks parsing.
  */
 function collectVite(): Record<ContentCategory, Array<{ raw: unknown; path: string }>> {
   const result = emptyResult();
   // @ts-ignore — Vite injects import.meta.glob at build time; TS doesn't know about it.
-  const modules: Record<string, { default: unknown }> = import.meta.glob('./content/**/*.json', {
+  const modules: Record<string, { default: unknown }> = import.meta.glob('../src/content/**/*.json', {
     eager: true,
     query: '?json',
   });
