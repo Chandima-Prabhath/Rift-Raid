@@ -11,9 +11,10 @@
     "packages/client"
   ],
   "scripts": {
-    "dev": "bun run build:deps && concurrently -n shared,engine,game,server,client -c magenta,cyan,yellow,blue,green \"tsc -b --watch packages/shared packages/engine packages/game\" \"bun run dev:server\" \"bun run dev:client\"",
+    "dev": "bun run build:deps && concurrently -k -n server,client -c blue,green \"bun run dev:server\" \"bun run dev:client\"",
     "dev:server": "bun --watch packages/server/src/index.ts",
-    "dev:client": "vite --host",
+    "dev:client": "bun --filter='@rift-and-raid/client' run dev -- --host",
+    "dev:watch": "bun run build:deps && concurrently -k -n build,server,client -c magenta,blue,green \"tsc -b --watch packages/shared packages/engine packages/game\" \"bun run dev:server\" \"bun run dev:client\"",
     "build:deps": "bun run build:shared && bun run build:engine && bun run build:game",
     "build:shared": "bun --filter='@rift-and-raid/shared' run build",
     "build:engine": "bun --filter='@rift-and-raid/engine' run build",
