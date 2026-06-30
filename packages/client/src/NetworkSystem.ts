@@ -94,6 +94,7 @@ export class NetworkSystem {
   private joinOptions: { name?: string; characterModel?: string; characterClass?: CharacterClass };
   private callbacks: NetworkSystemCallbacks;
   private getInput: () => InputState;
+  private getCameraYaw: () => number;
   private localSessionId: string | null = null;
   private entityBySessionId = new Map<string, Entity>();
   private sessionIdByEntity = new Map<Entity, string>();
@@ -113,12 +114,14 @@ export class NetworkSystem {
     getInput: () => InputState,
     callbacks: NetworkSystemCallbacks,
     joinOptions: { name?: string; characterModel?: string; characterClass?: CharacterClass } = {},
+    getCameraYaw: () => number = () => 0,
   ) {
     this.world = world;
     this.serverUrl = serverUrl;
     this.getInput = getInput;
     this.callbacks = callbacks;
     this.joinOptions = joinOptions;
+    this.getCameraYaw = getCameraYaw;
   }
 
   async connect(): Promise<void> {
@@ -226,10 +229,19 @@ export class NetworkSystem {
       this.lastInputSendAt = now;
       this.inputSequence++;
 
+      // Convert input (camera-space) to world-space using camera yaw.
+      // This way the server doesn't need to know about the camera — it
+      // just applies the world-space moveX/moveZ directly.
+      const cameraYaw = this.getCameraYaw();
+      const cosY = Math.cos(-cameraYaw);
+      const sinY = Math.sin(-cameraYaw);
+      const worldMoveX = input.move.x * cosY + input.move.y * sinY;
+      const worldMoveZ = -input.move.x * sinY + input.move.y * cosY;
+
       this.room.send('move', {
         sequence: this.inputSequence,
-        moveX: input.move.x,
-        moveZ: input.move.y,
+        moveX: worldMoveX,
+        moveZ: worldMoveZ,
         aimX: input.aim.x,
         aimZ: input.aim.y,
         sprint: input.sprintHeld,
@@ -238,7 +250,7 @@ export class NetworkSystem {
       if (input.dashPressed) {
         const hasInput = Math.hypot(input.move.x, input.move.y) > 0.1;
         if (hasInput) {
-          this.room.send('dash', { directionX: input.move.x, directionZ: input.move.y });
+          this.room.send('dash', { directionX: worldMoveX, directionZ: worldMoveZ });
         } else {
           const localEntity = this.localPlayerEntity;
           if (localEntity) {

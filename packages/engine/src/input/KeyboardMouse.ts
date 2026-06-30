@@ -1,10 +1,19 @@
 /**
  * Rift & Raid — KeyboardMouse adapter
  *
- * PC input. Maps WASD/arrows to move, mouse to aim, left-click to attack,
- * right-click to ability, space to dash, E to interact, shift to sprint.
+ * PC input bindings:
+ *   - WASD / Arrows  → move (camera-relative)
+ *   - Mouse move     → aim (ground-projected point)
+ *   - Left-click     → attack (hold for continuous)
+ *   - Right-click    → CAMERA ROTATION (held + drag) — NOT ability
+ *   - Space          → dash
+ *   - Q              → ability
+ *   - E              → interact
+ *   - Shift          → sprint
+ *   - 1/2/3          → class swap (Warrior/Ranger/Mage)
  *
- * Bindings are configurable via InputMapper (Phase 1).
+ * Right-click is captured by SceneManager for camera orbit. We do NOT
+ * bind it to ability here — use Q instead.
  */
 
 import type { Vec2 } from '@rift-and-raid/shared';
@@ -18,10 +27,10 @@ export class KeyboardMouse implements InputAdapter {
   private keys: Keys = {};
   private mouseX = 0;
   private mouseY = 0;
-  private mouseDown = false;
-  private abilityDown = false;
-  private dashQueued = false;
-  private interactQueued = false;
+  private mouseDown = false;       // left button
+  private abilityQueued = false;    // Q pressed (edge-triggered)
+  private dashQueued = false;       // Space pressed
+  private interactQueued = false;   // E pressed
   /** Ground-projected aim point (set by external code that knows the camera). */
   private aimWorld: Vec2 = { x: 0, y: 0 };
 
@@ -29,8 +38,12 @@ export class KeyboardMouse implements InputAdapter {
     // Avoid key-repeat causing edge-trigger spam.
     if (this.keys[e.code]) return;
     this.keys[e.code] = true;
-    if (e.code === 'Space') this.dashQueued = true;
+    if (e.code === 'Space') {
+      this.dashQueued = true;
+      e.preventDefault(); // prevent page scroll
+    }
     if (e.code === 'KeyE') this.interactQueued = true;
+    if (e.code === 'KeyQ') this.abilityQueued = true;
   };
   private onKeyUp = (e: KeyboardEvent) => {
     this.keys[e.code] = false;
@@ -40,12 +53,12 @@ export class KeyboardMouse implements InputAdapter {
     this.mouseY = e.clientY;
   };
   private onMouseDown = (e: MouseEvent) => {
+    // Only left-click triggers attack. Right-click is handled by SceneManager
+    // for camera rotation — we ignore it here.
     if (e.button === 0) this.mouseDown = true;
-    if (e.button === 2) this.abilityDown = true;
   };
   private onMouseUp = (e: MouseEvent) => {
     if (e.button === 0) this.mouseDown = false;
-    if (e.button === 2) this.abilityDown = false;
   };
   private onContext = (e: Event) => e.preventDefault();
 
@@ -67,7 +80,7 @@ export class KeyboardMouse implements InputAdapter {
     window.removeEventListener('contextmenu', this.onContext);
   }
 
-  /** Set the world-space aim point (computed by CameraController raycast). */
+  /** Set the world-space aim point (computed by raycast from camera). */
   setAimWorld(x: number, y: number): void {
     this.aimWorld.x = x;
     this.aimWorld.y = y;
@@ -93,15 +106,16 @@ export class KeyboardMouse implements InputAdapter {
     state.aim.y = this.aimWorld.y;
     state.aimActive = true;
 
-    // Attack.
+    // Attack (left-click, hold for continuous).
     if (this.mouseDown) {
       if (!state.attackHeld) state.attackPressed = true;
       state.attackHeld = true;
     }
 
-    // Ability (right-click).
-    if (this.abilityDown) {
+    // Ability (Q) — edge-triggered.
+    if (this.abilityQueued) {
       state.abilityPressed = true;
+      this.abilityQueued = false;
     }
 
     // Dash (space) — edge-triggered.

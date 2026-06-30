@@ -2,9 +2,16 @@
  * Rift & Raid — SceneManager
  *
  * Wraps THREE.WebGLRenderer + THREE.Scene + manages entity-to-Object3D mapping.
- * The renderer module is the ONLY place in the engine that imports three.
- * Gameplay systems never touch THREE directly — they update ECS transforms,
- * and the SceneManager syncs them to Object3Ds once per frame.
+ *
+ * Camera system:
+ *   - Third-person angled view (pitch 40° from horizon by default)
+ *   - 360° yaw rotation via right-click drag (desktop) or two-finger drag (mobile)
+ *   - Pitch adjustable via right-click vertical drag (clamped 20°–75°)
+ *   - Zoom via mouse wheel (desktop) or pinch (mobile)
+ *   - Smooth follow with lerp
+ *
+ * The camera orbits the follow target. Movement systems read cameraYaw
+ * to make WASD movement camera-relative (W = away from camera, not north).
  */
 
 import * as THREE from 'three';
@@ -20,12 +27,27 @@ export class SceneManager {
   readonly renderer: THREE.WebGLRenderer;
   readonly scene: THREE.Scene;
   readonly camera: THREE.PerspectiveCamera;
+
   /** Map from ECS entity id → THREE.Object3D. */
   private entityObjects = new Map<Entity, THREE.Object3D>();
   /** Camera follow target (entity). */
   private followTarget: Entity | null = null;
   private followPosition = new THREE.Vector3();
-  private cameraOffset: THREE.Vector3;
+
+  /** Camera orbit state. */
+  private yaw: number;   // rotation around Y axis (radians)
+  private pitch: number; // angle from horizon toward down (radians)
+  private distance: number;
+
+  // Right-click drag state
+  private isDragging = false;
+  private lastDragX = 0;
+  private lastDragY = 0;
+
+  // Pinch state (mobile)
+  private pinchActive = false;
+  private pinchStartDist = 0;
+  private pinchStartDistance = 0;
 
   constructor(opts: SceneManagerOptions = {}) {
     this.renderer = new THREE.WebGLRenderer({
@@ -33,8 +55,6 @@ export class SceneManager {
       antialias: opts.antialias ?? true,
       powerPreference: 'high-performance',
     });
-    // If no canvas was passed, Three.js creates one as renderer.domElement.
-    // We must append it to the DOM and position it to fill the viewport.
     if (!opts.canvas && this.renderer.domElement.parentNode === null) {
       const canvas = this.renderer.domElement;
       canvas.style.position = 'fixed';
@@ -52,8 +72,8 @@ export class SceneManager {
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
 
     this.scene = new THREE.Scene();
-    this.scene.background = new THREE.Color(0x87a8c8); // sky blue placeholder
-    this.scene.fog = new THREE.Fog(0x87a8c8, 60, 120);
+    this.scene.background = new THREE.Color(0x87a8c8);
+    this.scene.fog = new THREE.Fog(0x87a8c8, 80, 180);
 
     this.camera = new THREE.PerspectiveCamera(
       CAMERA_CONFIG.fov,
@@ -62,26 +82,23 @@ export class SceneManager {
       500
     );
 
-    // AoV-style angled top-down camera offset.
-    // Pitch 60deg from straight-down: height/distance = sin(60), forward/distance = cos(60)
-    const pitchRad = (CAMERA_CONFIG.pitchDeg * Math.PI) / 180;
-    const height = CAMERA_CONFIG.distance * Math.sin(pitchRad);
-    const forward = CAMERA_CONFIG.distance * Math.cos(pitchRad);
-    this.cameraOffset = new THREE.Vector3(0, height, forward);
+    // Initialize camera orbit from config.
+    this.yaw = CAMERA_CONFIG.initialYaw;
+    this.pitch = (CAMERA_CONFIG.pitchDeg * Math.PI) / 180;
+    this.distance = CAMERA_CONFIG.distance;
 
     this.setupLighting();
+    this.setupCameraControls();
     this.handleResize = this.handleResize.bind(this);
     window.addEventListener('resize', this.handleResize);
     this.handleResize();
   }
 
   private setupLighting(): void {
-    // Hemisphere light for soft ambient.
-    const hemi = new THREE.HemisphereLight(0xb8c8e0, 0x4a3a2a, 0.6);
+    const hemi = new THREE.HemisphereLight(0xb8c8e0, 0x4a3a2a, 0.7);
     this.scene.add(hemi);
 
-    // Directional "sun" with shadows.
-    const sun = new THREE.DirectionalLight(0xfff0d0, 1.2);
+    const sun = new THREE.DirectionalLight(0xfff0d0, 1.3);
     sun.position.set(40, 60, 20);
     sun.castShadow = true;
     sun.shadow.mapSize.set(2048, 2048);
@@ -93,19 +110,131 @@ export class SceneManager {
     sun.shadow.camera.far = 200;
     sun.shadow.bias = -0.0005;
     this.scene.add(sun);
+
+    // Ambient fill so shadows aren't pure black.
+    this.scene.add(new THREE.AmbientLight(0x404050, 0.4));
   }
 
-  /** Add or replace the Object3D for an entity. */
+  // --------------------------------------------------------------------------
+  // Camera controls (right-click drag + wheel zoom + touch)
+  // --------------------------------------------------------------------------
+
+  private setupCameraControls(): void {
+    const el = this.renderer.domElement;
+
+    // Right-click drag rotates the camera (yaw + pitch).
+    el.addEventListener('mousedown', (e) => {
+      if (e.button !== 2) return; // right-click only
+      this.isDragging = true;
+      this.lastDragX = e.clientX;
+      this.lastDragY = e.clientY;
+      e.preventDefault();
+    });
+
+    window.addEventListener('mousemove', (e) => {
+      if (!this.isDragging) return;
+      const dx = e.clientX - this.lastDragX;
+      const dy = e.clientY - this.lastDragY;
+      this.lastDragX = e.clientX;
+      this.lastDragY = e.clientY;
+      // Horizontal drag → yaw. Vertical drag → pitch.
+      this.yaw -= dx * CAMERA_CONFIG.yawSpeed;
+      this.pitch = this.clampPitch(this.pitch + dy * CAMERA_CONFIG.pitchSpeed);
+    });
+
+    window.addEventListener('mouseup', (e) => {
+      if (e.button === 2) this.isDragging = false;
+    });
+
+    // Prevent context menu on right-click.
+    el.addEventListener('contextmenu', (e) => e.preventDefault());
+
+    // Mouse wheel zoom.
+    el.addEventListener('wheel', (e) => {
+      e.preventDefault();
+      const delta = e.deltaY * 0.01;
+      this.distance = Math.max(
+        CAMERA_CONFIG.minDistance,
+        Math.min(CAMERA_CONFIG.maxDistance, this.distance + delta)
+      );
+    }, { passive: false });
+
+    // Touch: two-finger drag rotates + pinches zoom.
+    el.addEventListener('touchstart', (e) => {
+      if (e.touches.length === 2) {
+        this.pinchActive = true;
+        this.lastDragX = (e.touches[0].clientX + e.touches[1].clientX) / 2;
+        this.lastDragY = (e.touches[0].clientY + e.touches[1].clientY) / 2;
+        this.pinchStartDist = this.touchDistance(e.touches);
+        this.pinchStartDistance = this.distance;
+      }
+    }, { passive: false });
+
+    el.addEventListener('touchmove', (e) => {
+      if (e.touches.length === 2 && this.pinchActive) {
+        e.preventDefault();
+        const midX = (e.touches[0].clientX + e.touches[1].clientX) / 2;
+        const midY = (e.touches[0].clientY + e.touches[1].clientY) / 2;
+        const dx = midX - this.lastDragX;
+        const dy = midY - this.lastDragY;
+        this.lastDragX = midX;
+        this.lastDragY = midY;
+        this.yaw -= dx * CAMERA_CONFIG.yawSpeed;
+        this.pitch = this.clampPitch(this.pitch + dy * CAMERA_CONFIG.pitchSpeed);
+
+        // Pinch zoom.
+        const currentDist = this.touchDistance(e.touches);
+        const scale = this.pinchStartDist / currentDist;
+        this.distance = Math.max(
+          CAMERA_CONFIG.minDistance,
+          Math.min(CAMERA_CONFIG.maxDistance, this.pinchStartDistance * scale)
+        );
+      }
+    }, { passive: false });
+
+    el.addEventListener('touchend', (e) => {
+      if (e.touches.length < 2) this.pinchActive = false;
+    });
+  }
+
+  private touchDistance(touches: TouchList): number {
+    const dx = touches[0].clientX - touches[1].clientX;
+    const dy = touches[0].clientY - touches[1].clientY;
+    return Math.hypot(dx, dy);
+  }
+
+  private clampPitch(p: number): number {
+    const min = (CAMERA_CONFIG.minPitchDeg * Math.PI) / 180;
+    const max = (CAMERA_CONFIG.maxPitchDeg * Math.PI) / 180;
+    return Math.max(min, Math.min(max, p));
+  }
+
+  /** Current camera yaw (for camera-relative movement). */
+  get cameraYaw(): number {
+    return this.yaw;
+  }
+
+  /** Current camera pitch. */
+  get cameraPitch(): number {
+    return this.pitch;
+  }
+
+  /** Current camera distance from target. */
+  get cameraDistance(): number {
+    return this.distance;
+  }
+
+  // --------------------------------------------------------------------------
+  // Entity object management
+  // --------------------------------------------------------------------------
+
   attachObject(entity: Entity, obj: THREE.Object3D): void {
     const existing = this.entityObjects.get(entity);
-    if (existing) {
-      this.scene.remove(existing);
-    }
+    if (existing) this.scene.remove(existing);
     this.entityObjects.set(entity, obj);
     this.scene.add(obj);
   }
 
-  /** Remove and dispose the Object3D for an entity. */
   detachObject(entity: Entity): void {
     const obj = this.entityObjects.get(entity);
     if (!obj) return;
@@ -114,38 +243,54 @@ export class SceneManager {
     this.entityObjects.delete(entity);
   }
 
-  /** Get the Object3D for an entity (for direct manipulation by renderers). */
   getObject(entity: Entity): THREE.Object3D | undefined {
     return this.entityObjects.get(entity);
   }
 
-  /** Set which entity the camera should follow. */
   setFollowTarget(entity: Entity | null): void {
     this.followTarget = entity;
     if (entity !== null) {
       const obj = this.entityObjects.get(entity);
-      if (obj) {
-        this.followPosition.copy(obj.position);
-      }
+      if (obj) this.followPosition.copy(obj.position);
     }
   }
 
-  /** Update camera position based on follow target. Call once per render. */
+  // --------------------------------------------------------------------------
+  // Camera update
+  // --------------------------------------------------------------------------
+
+  /** Update camera position based on follow target + orbit angles. */
   updateCamera(alpha: number): void {
     if (this.followTarget === null) return;
     const obj = this.entityObjects.get(this.followTarget);
     if (!obj) return;
+
     // Smooth follow.
     this.followPosition.lerp(obj.position, CAMERA_CONFIG.followLerp);
-    const target = this.followPosition.clone().add(this.cameraOffset);
-    this.camera.position.copy(target);
+
+    // Spherical → Cartesian offset.
+    // pitch=0 → camera at horizon level behind player.
+    // pitch=90° → camera straight above looking down.
+    const cosPitch = Math.cos(this.pitch);
+    const sinPitch = Math.sin(this.pitch);
+    const cosYaw = Math.cos(this.yaw);
+    const sinYaw = Math.sin(this.yaw);
+
+    // Camera is positioned behind and above the player.
+    // At yaw=0, pitch=40°: camera is at (0, dist*sin40, dist*cos40) — above and behind on +Z.
+    const offsetX = -sinYaw * cosPitch * this.distance;
+    const offsetY = sinPitch * this.distance;
+    const offsetZ = cosYaw * cosPitch * this.distance;
+
+    this.camera.position.set(
+      this.followPosition.x + offsetX,
+      this.followPosition.y + offsetY,
+      this.followPosition.z + offsetZ
+    );
     this.camera.lookAt(this.followPosition);
-    // `alpha` is interpolation factor between ticks; for simplicity we use
-    // lerp here. Phase 2 will add proper state interpolation.
     void alpha;
   }
 
-  /** Render the scene. */
   render(): void {
     this.renderer.render(this.scene, this.camera);
   }

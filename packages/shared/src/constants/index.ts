@@ -30,22 +30,38 @@ export const WORLD_SIZE = {
 export const BASE_RADIUS_M = 50; // structures can only be placed within this radius of Nexus
 
 // ============================================================================
-// Camera (AoV-style angled top-down)
+// Camera (angled top-down, rotatable)
 // ============================================================================
 
 export const CAMERA_CONFIG = {
-  /** Pitch from straight-down (90deg) toward horizon (0deg). 60deg = AoV-like. */
-  pitchDeg: 60,
-  /** Distance from player. */
+  /**
+   * Pitch angle from horizon (0°) toward straight-down (90°).
+   * 40° = slightly elevated third-person view (like AoV / LoL).
+   * Higher = more top-down. Lower = more horizon.
+   */
+  pitchDeg: 40,
+  /** Distance from camera to player. */
   distance: 18,
-  /** Camera height above player. */
-  height: 14,
   /** Field of view. */
-  fov: 50,
+  fov: 55,
   /** Smoothing factor for follow (0 = instant, 1 = no follow). */
-  followLerp: 0.15,
+  followLerp: 0.18,
   /** Pixel ratio cap (mobile perf). */
   maxPixelRatio: 2,
+  /** Min/max zoom (mouse wheel). */
+  minDistance: 8,
+  maxDistance: 32,
+  /** Yaw rotation speed (radians per pixel of right-click drag). */
+  yawSpeed: 0.005,
+  /** Pitch adjustment speed (radians per pixel of right-click vertical drag). */
+  pitchSpeed: 0.003,
+  /** Min/max pitch (clamped so you can't go fully top-down or fully horizon). */
+  minPitchDeg: 20,
+  maxPitchDeg: 75,
+  /** Pinch-to-zoom speed factor (mobile). */
+  pinchZoomSpeed: 0.01,
+  /** Initial yaw (radians). 0 = looking toward -Z. */
+  initialYaw: 0,
 } as const;
 
 // ============================================================================

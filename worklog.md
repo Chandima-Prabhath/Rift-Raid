@@ -143,3 +143,46 @@ Stage Summary:
 - ✅ Vite dev server boots and serves assets correctly
 - ✅ Comprehensive test passes all assertions
 - Ready for live playtest with 2 browser tabs
+
+---
+Task ID: camera-controls-fix
+Agent: main
+Task: Fix camera (was on player's head), add 360° rotation, make movement camera-relative, improve controls.
+
+Work Log:
+- Root cause of "camera on head": pitchDeg was 60° measured from straight-down (so actual angle from horizon was 30°), and the offset math put the camera too close/low.
+- Rewrote CAMERA_CONFIG: pitch is now 40° from horizon (intuitive MOBA angle), with min/max clamp 20°-75°.
+- Rewrote SceneManager camera system:
+  - Spherical orbit (yaw + pitch + distance) around follow target
+  - Right-click drag → yaw rotation (horizontal) + pitch adjustment (vertical)
+  - Mouse wheel → zoom (distance 8-32)
+  - Touch: two-finger drag → rotate, pinch → zoom
+  - Exposed cameraYaw/cameraPitch/cameraDistance getters for gameplay code
+- Rewrote CameraController: thin gameplay-facing API, exposes yaw for movement
+- Rewrote MovementSystem: camera-relative movement
+  - Input vector (move.x, move.y) rotated by -cameraYaw to convert camera-space → world-space
+  - W always moves away from camera, S toward camera, A/D strafe relative to camera
+  - Character faces movement direction (not aim) — natural for third-person
+  - Dash is also camera-relative
+  - Only local player reads input (remote players are network-synced)
+- Updated NetworkSystem: converts input to world-space using camera yaw BEFORE sending to server
+  - Server stays simple — just applies world-space moveX/moveZ
+  - Added getCameraYaw parameter to constructor
+- Updated KeyboardMouse input adapter:
+  - Right-click NO LONGER triggers ability (it's camera rotation now)
+  - Ability moved to Q key
+  - Space dash now prevents page scroll
+  - Left-click still attacks (hold for continuous)
+- Updated main.ts: passes cameraController.yaw to both MovementSystem and NetworkSystem
+- All multiplayer tests still pass (movement replication works with camera-relative input)
+
+Stage Summary:
+- ✅ Camera is now angled top-down at 40° (not on player's head)
+- ✅ Right-click drag rotates camera 360° (horizontal) + adjusts pitch (vertical)
+- ✅ Mouse wheel zooms in/out (8-32 distance)
+- ✅ Touch: two-finger drag rotates, pinch zooms
+- ✅ WASD movement is camera-relative (W = away from camera, not north)
+- ✅ Character faces movement direction
+- ✅ Ability on Q key (right-click freed for camera)
+- ✅ All packages typecheck cleanly
+- ✅ Multiplayer test passes (colors, models, inventory, movement)

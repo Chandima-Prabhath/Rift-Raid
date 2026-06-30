@@ -301,6 +301,7 @@ async function main() {
       characterClass: loginOpts.characterClass,
       characterModel: loginOpts.characterModel,
     },
+    () => cameraController.yaw,
   );
 
   chatUI = new ChatUI((text) => network.sendChat(text));
@@ -316,7 +317,7 @@ async function main() {
         void entity; void color;
       },
     }),
-    new MovementSystem(() => inputManager.getState()),
+    new MovementSystem(() => inputManager.getState(), () => cameraController.yaw),
     new CombatSystem(content, () => inputManager.getState(), (entity, proj) => {
       const geo = new THREE.SphereGeometry(proj.radius, 8, 6);
       const mat = new THREE.MeshBasicMaterial({ color: proj.color });
