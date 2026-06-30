@@ -104,58 +104,33 @@ export class AssetLoader {
 
   /**
    * Normalize a loaded GLB model:
-   *   - Convert SkinnedMesh to regular Mesh (Kenney characters)
    *   - Enable castShadow/receiveShadow on all meshes
-   *   - Ensure materials are MeshStandardMaterial (for tint support)
+   *   - Keep original materials/textures (do NOT tint — faction color is
+   *     shown only on the name banner + HP bar, not on the model itself)
+   *
+   * NOTE: We do NOT convert SkinnedMesh → Mesh anymore. The previous
+   * implementation modified the scene tree during traverse(), which
+   * caused some children (like the head) to be skipped. Kenney models
+   * render fine as SkinnedMeshes even without animations — the bind-pose
+   * geometry is correct.
    */
   private normalizeModel(root: THREE.Object3D): void {
     root.traverse((child) => {
       const obj = child as THREE.Mesh;
       if (!obj.geometry) return;
-
-      // Convert SkinnedMesh → Mesh by stripping skinning attributes.
-      if ((obj as any).isSkinnedMesh) {
-        const geo = obj.geometry;
-        // Remove skinning attributes; keep position/normal/uv.
-        delete (geo as any).attributes.skinIndex;
-        delete (geo as any).attributes.skinWeight;
-        // Replace the SkinnedMesh with a regular Mesh.
-        const newMesh = new THREE.Mesh(geo, obj.material);
-        newMesh.name = obj.name;
-        newMesh.position.copy(obj.position);
-        newMesh.rotation.copy(obj.rotation);
-        newMesh.scale.copy(obj.scale);
-        newMesh.castShadow = true;
-        newMesh.receiveShadow = true;
-        // Replace in parent.
-        if (obj.parent) {
-          obj.parent.add(newMesh);
-          obj.parent.remove(obj);
-        }
-        return;
-      }
-
-      // Regular mesh — just enable shadows.
+      // Just enable shadows. Leave materials and mesh types as-is.
       obj.castShadow = true;
       obj.receiveShadow = true;
-
-      // Ensure material is MeshStandardMaterial (so we can tint it).
-      if (obj.material && !(obj.material instanceof THREE.MeshStandardMaterial)) {
-        const oldMat = obj.material as THREE.MeshBasicMaterial | THREE.MeshLambertMaterial;
-        const newMat = new THREE.MeshStandardMaterial({
-          map: oldMat.map ?? undefined,
-          color: oldMat.color?.clone() ?? new THREE.Color(0xffffff),
-        });
-        obj.material = newMat;
-        oldMat.dispose?.();
-      }
+      // Disable frustum culling for small models (prevents disappearing
+      // when the bounding sphere is miscalculated after scaling).
+      obj.frustumCulled = false;
     });
   }
 
   /**
    * Apply a color tint to all materials in a model.
-   * Used for faction-based coloring (Solari=orange, Lunari=blue).
-   * Tint multiplies the existing texture color.
+   * Currently unused — we keep original textures and show faction color
+   * only on the name banner + HP bar. Kept for future use.
    */
   applyTint(model: THREE.Object3D, tintColor: number): void {
     const color = new THREE.Color(tintColor);
@@ -249,8 +224,9 @@ export class CharacterModelLoader {
     model.rotation.y = Math.PI;
 
     // Auto-normalize scale to target height (1.8m).
-    // Different Kenney character models have slightly different base sizes,
-    // so we compute the bounding box and scale uniformly to hit 1.8m.
+    // Compute bounding box, scale uniformly so the model is 1.8m tall.
+    // Kenney models have their origin at the feet, so after scaling the
+    // feet stay at y=0 and the head is at y=1.8.
     const TARGET_HEIGHT = 1.8;
     const box = new THREE.Box3().setFromObject(model);
     const size = new THREE.Vector3();
@@ -260,14 +236,13 @@ export class CharacterModelLoader {
       model.scale.setScalar(scale);
     }
 
-    // Re-center horizontally on origin (so the model stands on its position
-    // point, not offset to one side).
+    // After scaling, recompute the box and shift the model so feet are at y=0
+    // and center it horizontally. We use a wrapper approach: adjust the
+    // model's position directly (it will be added as a child of the player
+    // mesh group, so position is relative to the group origin).
     const boxAfter = new THREE.Box3().setFromObject(model);
-    const center = new THREE.Vector3();
-    boxAfter.getCenter(center);
-    model.position.x -= center.x;
-    model.position.z -= center.z;
-    // Lift so feet are at y=0.
+    model.position.x -= (boxAfter.min.x + boxAfter.max.x) / 2;
+    model.position.z -= (boxAfter.min.z + boxAfter.max.z) / 2;
     model.position.y -= boxAfter.min.y;
 
     return model;

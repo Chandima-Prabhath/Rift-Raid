@@ -137,9 +137,9 @@ export class SceneManager {
       const dy = e.clientY - this.lastDragY;
       this.lastDragX = e.clientX;
       this.lastDragY = e.clientY;
-      // Horizontal drag → yaw. Vertical drag → pitch.
+      // Horizontal drag → yaw. Vertical drag → pitch (inverted: drag up = look down more).
       this.yaw -= dx * CAMERA_CONFIG.yawSpeed;
-      this.pitch = this.clampPitch(this.pitch + dy * CAMERA_CONFIG.pitchSpeed);
+      this.pitch = this.clampPitch(this.pitch - dy * CAMERA_CONFIG.pitchSpeed);
     });
 
     window.addEventListener('mouseup', (e) => {
@@ -180,7 +180,7 @@ export class SceneManager {
         this.lastDragX = midX;
         this.lastDragY = midY;
         this.yaw -= dx * CAMERA_CONFIG.yawSpeed;
-        this.pitch = this.clampPitch(this.pitch + dy * CAMERA_CONFIG.pitchSpeed);
+        this.pitch = this.clampPitch(this.pitch - dy * CAMERA_CONFIG.pitchSpeed);
 
         // Pinch zoom.
         const currentDist = this.touchDistance(e.touches);

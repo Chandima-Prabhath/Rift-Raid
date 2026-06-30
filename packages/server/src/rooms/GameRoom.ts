@@ -585,7 +585,13 @@ export class GameRoom extends Room<GameState> {
   }
 
   private handleConstruction(dt: number): void {
+    const toRemove: string[] = [];
     for (const struct of this.state.structures.values()) {
+      // Remove destroyed structures.
+      if (struct.hp <= 0 && struct.built) {
+        toRemove.push(struct.id);
+        continue;
+      }
       if (struct.built) continue;
       const config = STRUCTURE_TYPES[struct.structureType as StructureTypeId];
       if (!config) continue;
@@ -594,6 +600,9 @@ export class GameRoom extends Room<GameState> {
         struct.buildProgress = 1;
         struct.built = true;
       }
+    }
+    for (const id of toRemove) {
+      this.state.structures.delete(id);
     }
   }
 
@@ -624,8 +633,26 @@ export class GameRoom extends Room<GameState> {
       const slowMult = player.slowMs > 0 ? COMBAT.slowMultiplier : 1;
       const moveSpeed = baseSpeed * sprintMult * slowMult;
 
-      player.x += input.moveX * moveSpeed * dt;
-      player.z += input.moveZ * moveSpeed * dt;
+      const newX = player.x + input.moveX * moveSpeed * dt;
+      const newZ = player.z + input.moveZ * moveSpeed * dt;
+
+      // Structure collision: don't let players walk through built structures.
+      // Each structure has a ~1m radius collision cylinder.
+      let blocked = false;
+      for (const struct of this.state.structures.values()) {
+        if (!struct.built || struct.hp <= 0) continue;
+        const sdx = newX - struct.x;
+        const sdz = newZ - struct.z;
+        if (Math.hypot(sdx, sdz) < 1.2) {
+          blocked = true;
+          break;
+        }
+      }
+
+      if (!blocked) {
+        player.x = newX;
+        player.z = newZ;
+      }
       this.clampPosition(player);
 
       const dx = input.aimX - player.x;
@@ -653,6 +680,7 @@ export class GameRoom extends Room<GameState> {
 
       const hits = this.projectileHits.get(projId) ?? new Set();
       let hitSomething = false;
+      // Check collision with players.
       for (const [targetSid, target] of this.state.players.entries()) {
         if (targetSid === proj.ownerId || hits.has(targetSid)) continue;
         if (!target.alive || target.faction === proj.faction) continue;
@@ -664,6 +692,20 @@ export class GameRoom extends Room<GameState> {
           if (attacker) this.applyDamage(target, proj.damage, attacker);
           hits.add(targetSid);
           if (!proj.pierce) { hitSomething = true; break; }
+        }
+      }
+      // Check collision with enemy structures.
+      if (!hitSomething) {
+        for (const struct of this.state.structures.values()) {
+          if (!struct.built || struct.hp <= 0) continue;
+          if (struct.faction === proj.faction) continue;
+          const sdx = struct.x - proj.x;
+          const sdz = struct.z - proj.z;
+          const sdy = 1.0 - proj.y;
+          if (Math.hypot(sdx, sdy, sdz) <= COMBAT.projectileRadius + 1.0) {
+            struct.hp = Math.max(0, struct.hp - proj.damage);
+            if (!proj.pierce) { hitSomething = true; break; }
+          }
         }
       }
       this.projectileHits.set(projId, hits);

@@ -234,8 +234,9 @@ async function main() {
         if (isLocal) cameraController.follow(entity);
 
         try {
+          // Load model with ORIGINAL textures — no faction tint.
+          // Faction color is shown only on the name banner + HP bar.
           const model = await characterLoader.load(characterModel);
-          characterLoader.applyFactionTint(model, color);
           const vis = playerVisuals.get(entity);
           if (vis) {
             while (mesh.children.length > 0) {
@@ -270,7 +271,6 @@ async function main() {
           if (vis.currentModelId !== characterModel && !vis.modelLoading) {
             vis.modelLoading = true;
             characterLoader.load(characterModel).then((model) => {
-              characterLoader.applyFactionTint(model, color);
               while (vis.mesh.children.length > 0) {
                 const child = vis.mesh.children[0];
                 if (child === vis.nameTag.sprite) break;
@@ -491,14 +491,30 @@ async function main() {
   }
 
   function syncStructureMeshes() {
+    // Remove meshes for structures that no longer exist on the server.
+    const currentIds = new Set<string>();
+    network.forEachStructure((_, structId) => currentIds.add(structId));
+    for (const [id, mesh] of structureMeshes) {
+      if (!currentIds.has(id)) {
+        sceneManager.scene.remove(mesh);
+        structureMeshes.delete(id);
+        knownStructureIds.delete(id);
+      }
+    }
+
     network.forEachStructure((struct, structId) => {
       if (knownStructureIds.has(structId)) {
-        // Update: scale based on build progress.
         const mesh = structureMeshes.get(structId);
         if (mesh) {
           const progress = struct.buildProgress;
           mesh.scale.y = Math.max(0.1, progress);
           mesh.visible = struct.hp > 0;
+          // Update opacity based on built state.
+          const mat = (mesh as THREE.Mesh).material as THREE.MeshStandardMaterial;
+          if (mat) {
+            mat.transparent = !struct.built;
+            mat.opacity = struct.built ? 1.0 : 0.6;
+          }
         }
         return;
       }
@@ -651,6 +667,14 @@ async function main() {
     update: (dt) => {
       inputManager.update(dt);
       updateAimAndBuildGhost();
+
+      // Suppress attacks while in build mode (prevents the "orange dot"
+      // damage number / projectile from firing when clicking to place).
+      if (buildMode.type) {
+        const state = inputManager.getState() as any;
+        state.attackPressed = false;
+        state.attackHeld = false;
+      }
 
       for (const sys of systems) sys.update(world, dt);
 

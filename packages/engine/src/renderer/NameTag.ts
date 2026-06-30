@@ -113,17 +113,18 @@ export class NameTag {
     ctx.fillText(owner.name, w / 2, nameY);
 
     // ── HP bar (bottom half) ─────────────────────────────────────────────
+    // HP bar fill uses the SAME color as the name (relationship-based):
+    //   green = self, blue = ally, red = enemy.
     const barX = bgX + 12;
     const barY = bgY + 44;
     const barW = bgW - 24;
     const barH = 16;
     // Background.
-    ctx.fillStyle = 'rgba(40, 0, 0, 0.85)';
+    ctx.fillStyle = 'rgba(30, 30, 30, 0.85)';
     this.roundRect(ctx, barX, barY, barW, barH, 4);
     ctx.fill();
-    // Fill (HP-dependent color: green > 50%, yellow > 25%, red otherwise).
-    const fillColor = hpPct > 0.5 ? '#3ee07a' : hpPct > 0.25 ? '#e0d83e' : '#e04a4a';
-    ctx.fillStyle = fillColor;
+    // Fill (relationship color).
+    ctx.fillStyle = color;
     const fillW = Math.max(0, barW * hpPct);
     if (fillW > 0) {
       this.roundRect(ctx, barX, barY, fillW, barH, 4);
