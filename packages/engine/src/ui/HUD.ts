@@ -111,18 +111,23 @@ export class HUD {
     this.health.appendChild(this.makeTextSpan('HP', 'bottom: 6px; left: 10px; font-size: 12px;'));
     this.container.appendChild(this.health);
 
-    // Controls hint (bottom-center).
+    // Controls hint (bottom-center) — two lines for readability.
     this.controls = document.createElement('div');
     this.controls.style.cssText = `
       position: absolute;
       bottom: 8px; left: 50%;
       transform: translateX(-50%);
       font-size: 11px;
-      color: rgba(255,255,255,0.5);
+      color: rgba(255,255,255,0.45);
       font-family: monospace;
       white-space: nowrap;
+      text-align: center;
+      line-height: 1.6;
     `;
-    this.controls.innerHTML = 'WASD move · Mouse aim · L-Click attack · Q ability · Space dash · E interact · B build · R-Click rotate camera · Wheel zoom';
+    this.controls.innerHTML = [
+      '<b style="color:rgba(255,255,255,0.7)">WASD</b> move · <b style="color:rgba(255,255,255,0.7)">Mouse</b> aim · <b style="color:rgba(255,255,255,0.7)">L-Click</b> attack · <b style="color:rgba(255,255,255,0.7)">Q</b> ability · <b style="color:rgba(255,255,255,0.7)">Space</b> dash',
+      '<b style="color:rgba(255,255,255,0.7)">E</b> interact · <b style="color:rgba(255,255,255,0.7)">B</b> build · <b style="color:rgba(255,255,255,0.7)">R-Click/Middle</b> rotate camera · <b style="color:rgba(255,255,255,0.7)">Wheel</b> zoom · <b style="color:rgba(255,255,255,0.7)">F3</b> debug',
+    ].join('<br>');
     this.container.appendChild(this.controls);
   }
 

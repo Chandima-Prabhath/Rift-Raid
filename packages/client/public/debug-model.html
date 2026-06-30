@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>GLB Model Debug</title>
+  <style>
+    body { margin: 0; background: #222; color: #eee; font-family: monospace; overflow: hidden; }
+    #info { position: fixed; top: 8px; left: 8px; z-index: 10; font-size: 12px; line-height: 1.5; background: rgba(0,0,0,0.7); padding: 8px; border-radius: 4px; max-width: 500px; }
+    #log { position: fixed; bottom: 8px; left: 8px; z-index: 10; font-size: 11px; line-height: 1.4; background: rgba(0,0,0,0.7); padding: 8px; border-radius: 4px; max-width: 600px; max-height: 250px; overflow-y: auto; }
+    canvas { display: block; }
+    .err { color: #f66; }
+    .ok { color: #6f6; }
+    .warn { color: #ff6; }
+  </style>
+</head>
+<body>
+  <div id="info">Loading...</div>
+  <div id="log"></div>
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+      "three/examples/jsm/loaders/GLTFLoader.js": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/loaders/GLTFLoader.js"
+    }
+  }
+  </script>
+  <script type="module">
+    import * as THREE from 'three';
+    import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+
+    const logEl = document.getElementById('log');
+    const infoEl = document.getElementById('info');
+    function log(msg, type = '') {
+      const div = document.createElement('div');
+      div.className = type;
+      div.textContent = msg;
+      logEl.appendChild(div);
+      logEl.scrollTop = logEl.scrollHeight;
+      console.log(msg);
+    }
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x445566);
+    const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 100);
+    camera.position.set(5, 4, 5);
+    camera.lookAt(0, 1, 0);
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.shadowMap.enabled = true;
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+    document.body.appendChild(renderer.domElement);
+
+    scene.add(new THREE.HemisphereLight(0xffffff, 0x443322, 0.8));
+    const dirLight = new THREE.DirectionalLight(0xffffff, 1.2);
+    dirLight.position.set(5, 10, 5);
+    scene.add(dirLight);
+    scene.add(new THREE.AmbientLight(0x404040, 0.4));
+
+    const grid = new THREE.GridHelper(10, 10, 0x888888, 0x444444);
+    scene.add(grid);
+
+    const MODEL_URL = '/characters/character-male-a.glb';
+    log(`Loading: ${MODEL_URL}`);
+
+    const manager = new THREE.LoadingManager();
+    manager.setURLModifier((url) => {
+      if (/^https?:\/\//i.test(url)) return url;
+      if (/\.(png|jpe?g|webp|ktx2|tga|bmp|gif)$/i.test(url)) {
+        const filename = url.split('/').pop() ?? url;
+        if (filename === 'colormap.png') return '/textures/characters-colormap.png';
+        return `/textures/${filename}`;
+      }
+      return url;
+    });
+
+    const loader = new GLTFLoader(manager);
+    loader.load(MODEL_URL, (gltf) => {
+      log('GLB loaded successfully!', 'ok');
+
+      const model = gltf.scene;
+      log(`Scene children: ${model.children.length}`);
+
+      let meshCount = 0;
+      let skinnedCount = 0;
+      model.traverse((child) => {
+        if (child.isMesh) {
+          meshCount++;
+          log(`  Mesh: "${child.name}" type=${child.isSkinnedMesh ? 'SkinnedMesh' : 'Mesh'} mat=${child.material?.type} verts=${child.geometry?.attributes?.position?.count ?? 0}`);
+          if (child.isSkinnedMesh) {
+            skinnedCount++;
+            log(`    Skeleton bones: ${child.skeleton?.bones?.length ?? 0}`);
+          }
+          // Check material
+          if (child.material) {
+            const mats = Array.isArray(child.material) ? child.material : [child.material];
+            for (const m of mats) {
+              log(`    Material: ${m.type} color=${m.color?.getHexString?.() ?? 'none'} map=${m.map ? 'yes' : 'no'}`);
+            }
+          }
+        }
+      });
+      log(`Total meshes: ${meshCount} (${skinnedCount} skinned)`, 'ok');
+
+      const box1 = new THREE.Box3().setFromObject(model);
+      const size1 = new THREE.Vector3();
+      box1.getSize(size1);
+      log(`Bounding box (raw): min=(${box1.min.x.toFixed(3)},${box1.min.y.toFixed(3)},${box1.min.z.toFixed(3)}) max=(${box1.max.x.toFixed(3)},${box1.max.y.toFixed(3)},${box1.max.z.toFixed(3)})`);
+      log(`Size: ${size1.x.toFixed(3)} x ${size1.y.toFixed(3)} x ${size1.z.toFixed(3)}`, size1.y > 0.01 ? 'ok' : 'err');
+
+      const TARGET_HEIGHT = 1.8;
+      let scale = 1;
+      if (size1.y > 0.001) {
+        scale = TARGET_HEIGHT / size1.y;
+        model.scale.setScalar(scale);
+        log(`Scale factor: ${scale.toFixed(4)}`, 'ok');
+      } else {
+        log('Size.y is zero — cannot scale!', 'err');
+      }
+
+      model.rotation.y = Math.PI;
+
+      const box2 = new THREE.Box3().setFromObject(model);
+      const size2 = new THREE.Vector3();
+      box2.getSize(size2);
+      log(`Bounding box (scaled): min=(${box2.min.x.toFixed(3)},${box2.min.y.toFixed(3)},${box2.min.z.toFixed(3)}) max=(${box2.max.x.toFixed(3)},${box2.max.y.toFixed(3)},${box2.max.z.toFixed(3)})`);
+      log(`Size: ${size2.x.toFixed(3)} x ${size2.y.toFixed(3)} x ${size2.z.toFixed(3)}`, 'ok');
+
+      model.position.x -= (box2.min.x + box2.max.x) / 2;
+      model.position.z -= (box2.min.z + box2.max.z) / 2;
+      model.position.y -= box2.min.y;
+      log(`Position offset: x=${model.position.x.toFixed(3)} y=${model.position.y.toFixed(3)} z=${model.position.z.toFixed(3)}`);
+
+      model.traverse((child) => {
+        if (child.isMesh) {
+          child.castShadow = true;
+          child.receiveShadow = true;
+          child.frustumCulled = false;
+        }
+      });
+
+      scene.add(model);
+      log('Model added to scene', 'ok');
+
+      const box3 = new THREE.Box3().setFromObject(model);
+      log(`World box: min=(${box3.min.x.toFixed(2)},${box3.min.y.toFixed(2)},${box3.min.z.toFixed(2)}) max=(${box3.max.x.toFixed(2)},${box3.max.y.toFixed(2)},${box3.max.z.toFixed(2)})`, 'ok');
+
+      infoEl.innerHTML = `Model loaded. ${meshCount} meshes (${skinnedCount} skinned). Size: ${size2.y.toFixed(2)}m.<br>Drag mouse to orbit. Wheel to zoom.`;
+
+      // Reference capsule
+      const refGeo = new THREE.CapsuleGeometry(0.4, 1.0, 4, 8);
+      const refMat = new THREE.MeshStandardMaterial({ color: 0xff0000, wireframe: true });
+      const refMesh = new THREE.Mesh(refGeo, refMat);
+      refMesh.position.set(2, 0.9, 0);
+      scene.add(refMesh);
+    }, (progress) => {
+      if (progress.total > 0) {
+        infoEl.textContent = `Loading: ${Math.round(progress.loaded / progress.total * 100)}%`;
+      }
+    }, (err) => {
+      log(`Load error: ${err.message}`, 'err');
+      console.error(err);
+      infoEl.textContent = 'Load failed — see log';
+    });
+
+    // Orbit camera
+    let isDragging = false;
+    let lastX = 0, lastY = 0;
+    let yaw = 0.7, pitch = 0.5;
+    let camDist = 8;
+    function updateCam() {
+      camera.position.x = Math.sin(yaw) * Math.cos(pitch) * camDist;
+      camera.position.y = Math.sin(pitch) * camDist;
+      camera.position.z = Math.cos(yaw) * Math.cos(pitch) * camDist;
+      camera.lookAt(0, 1, 0);
+    }
+    updateCam();
+    renderer.domElement.addEventListener('mousedown', (e) => { isDragging = true; lastX = e.clientX; lastY = e.clientY; });
+    window.addEventListener('mouseup', () => { isDragging = false; });
+    window.addEventListener('mousemove', (e) => {
+      if (!isDragging) return;
+      yaw -= (e.clientX - lastX) * 0.01;
+      pitch = Math.max(0.1, Math.min(1.4, pitch + (e.clientY - lastY) * 0.01));
+      lastX = e.clientX; lastY = e.clientY;
+      updateCam();
+    });
+    renderer.domElement.addEventListener('wheel', (e) => {
+      camDist = Math.max(3, Math.min(20, camDist + e.deltaY * 0.01));
+      updateCam();
+    });
+
+    window.addEventListener('resize', () => {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+
+    function animate() {
+      requestAnimationFrame(animate);
+      renderer.render(scene, camera);
+    }
+    animate();
+  </script>
+</body>
+</html>

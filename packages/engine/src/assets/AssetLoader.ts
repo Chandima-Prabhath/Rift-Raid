@@ -15,14 +15,13 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 // ============================================================================
 
 /**
- * Kenney packs reference textures by relative filename (e.g. "colormap.png").
- * Each pack has its own colormap.png. We redirect based on the model path.
+ * Kenney packs reference textures by relative filename (e.g. "colormap.png"
+ * or "Textures/colormap.png"). Each pack has its own colormap.png. We
+ * redirect based on the model path.
  *
  * IMPORTANT: The URL modifier intercepts ALL URLs the GLTFLoader requests,
  * including the .glb file itself. We MUST only redirect texture files
- * (png/jpg/etc), NOT the .glb — otherwise the GLB gets redirected to
- * /textures/... where it doesn't exist, Vite serves an HTML 404 fallback,
- * and GLTFLoader crashes trying to JSON.parse HTML.
+ * (png/jpg/etc), NOT the .glb.
  */
 function buildTextureRedirect(modelUrl: string): (url: string) => string {
   let pack = 'default';
@@ -35,10 +34,17 @@ function buildTextureRedirect(modelUrl: string): (url: string) => string {
   return (url: string): string => {
     if (/^https?:\/\//i.test(url)) return url;
     if (!TEXTURE_EXTS.test(url)) return url;
-    const filename = url.split('/').pop() ?? url;
+
+    // Get just the filename, lowercased for matching.
+    const filename = (url.split('/').pop() ?? url).toLowerCase();
+
+    // Kenney packs use a single colormap per pack. The GLB may reference it
+    // as "colormap.png", "Textures/colormap.png", or "textures/colormap.png".
+    // We redirect all variants to /textures/{pack}-colormap.png.
     if (filename === 'colormap.png') {
       return `/textures/${pack}-colormap.png`;
     }
+    // Any other texture: look in the textures/ dir by filename.
     return `/textures/${filename}`;
   };
 }
@@ -81,8 +87,7 @@ export class AssetLoader {
   /**
    * Normalize a loaded GLB model:
    *   - Enable castShadow/receiveShadow on all meshes
-   *   - Bake SkinnedMesh skeletons so bounding boxes are correct
-   *     (SkinnedMesh.boundingBox returns null without baking)
+   *   - Ensure materials render even if texture is missing (fallback color)
    *   - Disable frustum culling (prevents disappearing after scaling)
    */
   private normalizeModel(root: THREE.Object3D): void {
@@ -93,14 +98,26 @@ export class AssetLoader {
       obj.receiveShadow = true;
       obj.frustumCulled = false;
 
-      // Bake skinned mesh skeletons so bounding box computation works.
-      // Without this, Box3.setFromObject() returns incorrect bounds for
-      // SkinnedMeshes (they report their bind-pose extent, not the actual
-      // rendered geometry — often (0,0,0) to (0,0,0)).
-      if ((obj as any).isSkinnedMesh && (obj as any).skeleton) {
-        (obj as any).skeleton.computeBoneTexture?.();
-        // Force the bounding box to be computed from the base geometry.
-        obj.geometry.computeBoundingBox();
+      // Ensure material has a visible color even if texture fails to load.
+      // Kenney materials sometimes have color=black by default; if the
+      // texture map is missing, the mesh renders as invisible black.
+      if (obj.material) {
+        const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
+        for (const mat of mats) {
+          const m = mat as THREE.MeshStandardMaterial;
+          // If material color is pure black and there's a texture map,
+          // set color to white so the texture shows through.
+          if (m.map && m.color) {
+            const c = m.color;
+            if (c.r < 0.01 && c.g < 0.01 && c.b < 0.01) {
+              m.color.setRGB(1, 1, 1);
+            }
+          }
+          // Ensure the material is not fully transparent.
+          if (m.transparent && m.opacity !== undefined && m.opacity < 0.01) {
+            m.opacity = 1;
+          }
+        }
       }
     });
   }

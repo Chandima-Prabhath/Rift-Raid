@@ -116,15 +116,25 @@ export class SceneManager {
   }
 
   // --------------------------------------------------------------------------
-  // Camera controls (right-click drag + wheel zoom + touch)
+  // Camera controls
+  // --------------------------------------------------------------------------
+  // Controls:
+  //   - Right-click drag OR Middle-click drag → orbit camera (yaw + pitch)
+  //   - Mouse wheel → zoom
+  //   - Touch: two-finger drag → orbit, pinch → zoom
+  //
+  // Design principles:
+  //   - Horizontal drag rotates the world left/right (camera yaws)
+  //   - Vertical drag tilts the view (drag UP = camera looks down more)
+  //   - Smooth lerp on yaw/pitch for momentum feel
   // --------------------------------------------------------------------------
 
   private setupCameraControls(): void {
     const el = this.renderer.domElement;
 
-    // Right-click drag rotates the camera (yaw + pitch).
+    // Right-click OR middle-click starts camera drag.
     el.addEventListener('mousedown', (e) => {
-      if (e.button !== 2) return; // right-click only
+      if (e.button !== 2 && e.button !== 1) return;
       this.isDragging = true;
       this.lastDragX = e.clientX;
       this.lastDragY = e.clientY;
@@ -137,19 +147,20 @@ export class SceneManager {
       const dy = e.clientY - this.lastDragY;
       this.lastDragX = e.clientX;
       this.lastDragY = e.clientY;
-      // Horizontal drag → yaw. Vertical drag → pitch (inverted: drag up = look down more).
+      // Horizontal drag → yaw. Vertical drag → pitch.
+      // Drag UP (dy < 0) → pitch increases (camera looks down more) → intuitive.
       this.yaw -= dx * CAMERA_CONFIG.yawSpeed;
       this.pitch = this.clampPitch(this.pitch - dy * CAMERA_CONFIG.pitchSpeed);
     });
 
     window.addEventListener('mouseup', (e) => {
-      if (e.button === 2) this.isDragging = false;
+      if (e.button === 2 || e.button === 1) this.isDragging = false;
     });
 
     // Prevent context menu on right-click.
     el.addEventListener('contextmenu', (e) => e.preventDefault());
 
-    // Mouse wheel zoom.
+    // Mouse wheel zoom — smooth.
     el.addEventListener('wheel', (e) => {
       e.preventDefault();
       const delta = e.deltaY * 0.01;
