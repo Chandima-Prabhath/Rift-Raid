@@ -86,40 +86,105 @@ export class AssetLoader {
 
   /**
    * Normalize a loaded GLB model:
+   *   - Convert SkinnedMesh → regular Mesh (strips skinning so the mesh
+   *     renders correctly without requiring skeleton bones in the scene tree)
    *   - Enable castShadow/receiveShadow on all meshes
    *   - Ensure materials render even if texture is missing (fallback color)
    *   - Disable frustum culling (prevents disappearing after scaling)
+   *
+   * Why convert SkinnedMesh?
+   *   SkinnedMeshes require their skeleton bones to be in the scene tree
+   *   for correct rendering. When we clone the cached model, the skeleton
+   *   bones are shared by reference but may not be properly attached,
+   *   causing the mesh to render at the wrong position or be invisible.
+   *   Kenney character models use SkinnedMesh but have no animations, so
+   *   stripping skinning is safe — the bind-pose geometry is the final pose.
+   *
+   * We collect the meshes to replace FIRST, then do the replacement after
+   * traversal — this avoids the bug where modifying the tree during
+   * traverse() causes some children to be skipped.
    */
   private normalizeModel(root: THREE.Object3D): void {
+    // Phase 1: collect all meshes and their properties.
+    const toReplace: Array<{
+      mesh: THREE.Mesh;
+      parent: THREE.Object3D;
+      geometry: THREE.BufferGeometry;
+      material: THREE.Material | THREE.Material[];
+      worldMatrix: THREE.Matrix4;
+    }> = [];
+
     root.traverse((child) => {
       const obj = child as THREE.Mesh;
       if (!obj.geometry) return;
-      obj.castShadow = true;
-      obj.receiveShadow = true;
-      obj.frustumCulled = false;
 
-      // Ensure material has a visible color even if texture fails to load.
-      // Kenney materials sometimes have color=black by default; if the
-      // texture map is missing, the mesh renders as invisible black.
-      if (obj.material) {
-        const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
-        for (const mat of mats) {
-          const m = mat as THREE.MeshStandardMaterial;
-          // If material color is pure black and there's a texture map,
-          // set color to white so the texture shows through.
-          if (m.map && m.color) {
-            const c = m.color;
-            if (c.r < 0.01 && c.g < 0.01 && c.b < 0.01) {
-              m.color.setRGB(1, 1, 1);
-            }
-          }
-          // Ensure the material is not fully transparent.
-          if (m.transparent && m.opacity !== undefined && m.opacity < 0.01) {
-            m.opacity = 1;
-          }
-        }
+      if ((obj as any).isSkinnedMesh) {
+        // Collect this SkinnedMesh for replacement.
+        toReplace.push({
+          mesh: obj,
+          parent: obj.parent!,
+          geometry: obj.geometry,
+          material: obj.material,
+          worldMatrix: obj.matrixWorld.clone(),
+        });
+      } else {
+        // Regular mesh — just enable shadows.
+        obj.castShadow = true;
+        obj.receiveShadow = true;
+        obj.frustumCulled = false;
+        this.fixMaterial(obj);
       }
     });
+
+    // Phase 2: replace SkinnedMeshes with regular Meshes (after traversal).
+    for (const item of toReplace) {
+      // Strip skinning attributes from the geometry (clone it so we don't
+      // mutate the cached version).
+      const newGeo = item.geometry.clone();
+      delete (newGeo as any).attributes.skinIndex;
+      delete (newGeo as any).attributes.skinWeight;
+      newGeo.computeVertexNormals();
+
+      const newMesh = new THREE.Mesh(newGeo, item.material);
+      newMesh.name = item.mesh.name;
+      // Copy the world transform so the mesh appears in the right place.
+      newMesh.matrix.copy(item.worldMatrix);
+      newMesh.matrixAutoUpdate = false; // we set the matrix manually
+      newMesh.castShadow = true;
+      newMesh.receiveShadow = true;
+      newMesh.frustumCulled = false;
+
+      // Replace in parent.
+      item.parent.remove(item.mesh);
+      item.parent.add(newMesh);
+
+      // Apply material fixes.
+      this.fixMaterial(newMesh);
+    }
+  }
+
+  /**
+   * Fix material so the mesh is visible even if texture fails to load.
+   * - If color is pure black and a texture map is expected, set color to white
+   * - Ensure material isn't fully transparent
+   */
+  private fixMaterial(mesh: THREE.Mesh): void {
+    if (!mesh.material) return;
+    const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+    for (const mat of mats) {
+      const m = mat as THREE.MeshStandardMaterial;
+      if (m.map && m.color) {
+        const c = m.color;
+        if (c.r < 0.01 && c.g < 0.01 && c.b < 0.01) {
+          m.color.setRGB(1, 1, 1);
+        }
+      }
+      if (m.transparent && m.opacity !== undefined && m.opacity < 0.01) {
+        m.opacity = 1;
+      }
+      // Ensure the material updates.
+      m.needsUpdate = true;
+    }
   }
 
   /** Load a texture. */
