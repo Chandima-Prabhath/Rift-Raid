@@ -92,8 +92,10 @@ async function collectNode(): Promise<
   const thisDir = path.dirname(url.fileURLToPath(import.meta.url));
   const candidates = [
     path.join(thisDir, 'content'), // src/ in dev (tsx runs from src)
-    path.join(thisDir, '..', 'content'), // dist/ → ../content in built mode
+    path.join(thisDir, '..', 'content'), // dist/content → ../content (won't exist; tsc doesn't copy JSON)
+    path.join(thisDir, '..', 'src', 'content'), // dist/loadContent.js → ../src/content (built mode fallback)
     path.join(process.cwd(), 'packages', 'game', 'src', 'content'),
+    path.join(process.cwd(), 'src', 'content'), // when cwd is packages/game
   ];
   let root: string | null = null;
   for (const c of candidates) {
