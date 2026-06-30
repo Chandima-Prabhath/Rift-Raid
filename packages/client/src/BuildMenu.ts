@@ -44,16 +44,19 @@ export class BuildMenu {
       color: white;
     `;
     document.body.appendChild(this.container);
-    this.render();
+    // Don't call render() in constructor — the callbacks may reference
+    // objects that aren't initialized yet (e.g. NetworkSystem). render()
+    // is called on first toggle() instead.
   }
 
   toggle(): void {
     this.isVisible = !this.isVisible;
     this.container.style.display = this.isVisible ? 'flex' : 'none';
-    if (!this.isVisible) {
+    if (this.isVisible) {
+      this.render();
+    } else {
       this.selected = null;
       this.callbacks.onSelect(null);
-      this.render();
     }
   }
 

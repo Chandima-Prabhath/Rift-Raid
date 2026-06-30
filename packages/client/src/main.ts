@@ -163,16 +163,21 @@ async function main() {
   /** Build mode state: when a structure type is selected, clicking places it. */
   let buildMode: { type: string; ghost: THREE.Object3D | null } = { type: '', ghost: null };
 
-  // ── 10. Build menu ─────────────────────────────────────────────────────
+  // ── 10. Network system (declared early, assigned after BuildMenu) ──────
+  // The BuildMenu callbacks reference `network`, so we declare it as `let`
+  // here and assign the instance after the BuildMenu is created. The
+  // callbacks are only invoked at runtime (after network is assigned), so
+  // this is safe.
+  let network: NetworkSystem;
+
+  // ── 10b. Build menu ────────────────────────────────────────────────────
   const buildMenu = new BuildMenu({
     onSelect: (structureType) => {
-      // Remove old ghost.
       if (buildMode.ghost) {
         sceneManager.scene.remove(buildMode.ghost);
         buildMode.ghost = null;
       }
       if (structureType) {
-        // Create a ghost preview mesh (semi-transparent box).
         const geo = new THREE.BoxGeometry(2, 2, 0.3);
         const mat = new THREE.MeshBasicMaterial({
           color: 0x4a90e2,
@@ -214,7 +219,7 @@ async function main() {
   });
 
   // ── 11. Network system ─────────────────────────────────────────────────
-  const network = new NetworkSystem(
+  network = new NetworkSystem(
     world,
     SERVER_URL,
     () => inputManager.getState(),
