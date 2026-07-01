@@ -79,7 +79,7 @@ import { InteractPrompt } from './InteractPrompt.js';
 
 const boot = document.getElementById('boot');
 const SERVER_URL = new URLSearchParams(window.location.search).get('server')
-  ?? 'ws://localhost:2567';
+  ?? 'ws://redacted-mt.local:2567';
 
 interface PlayerVisual {
   mesh: THREE.Group;

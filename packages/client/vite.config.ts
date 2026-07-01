@@ -30,6 +30,7 @@ export default defineConfig({
   root: __dirname,
   server: {
     port: 5173,
+    allowedHosts: ["redacted-mt.local"],
     host: true, // allow LAN connections for boarding-house playtests
     // Don't SPA-fallback .html files — let /editor.html serve the editor.
     // Without this, Vite serves index.html for ALL .html requests.

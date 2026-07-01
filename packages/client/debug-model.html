@@ -59,7 +59,7 @@
     const grid = new THREE.GridHelper(10, 10, 0x888888, 0x444444);
     scene.add(grid);
 
-    const MODEL_URL = '/characters/character-male-a.glb';
+    const MODEL_URL = '/structures/wall-wood.glb';
     log(`Loading: ${MODEL_URL}`);
 
     const manager = new THREE.LoadingManager();
@@ -67,7 +67,7 @@
       if (/^https?:\/\//i.test(url)) return url;
       if (/\.(png|jpe?g|webp|ktx2|tga|bmp|gif)$/i.test(url)) {
         const filename = url.split('/').pop() ?? url;
-        if (filename === 'colormap.png') return '/textures/characters-colormap.png';
+        if (filename === 'colormap.png') return '/textures/structures-colormap.png';
         return `/textures/${filename}`;
       }
       return url;
