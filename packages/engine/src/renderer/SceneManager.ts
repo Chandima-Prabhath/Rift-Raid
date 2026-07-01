@@ -54,6 +54,9 @@ export class SceneManager {
   private autoFollowEnabled = true;
   private targetAutoYaw: number | null = null;
 
+  // Sun (directional light) — needs to follow the player for shadows.
+  private sun!: THREE.DirectionalLight;
+
   constructor(opts: SceneManagerOptions = {}) {
     this.renderer = new THREE.WebGLRenderer({
       canvas: opts.canvas,
@@ -103,18 +106,20 @@ export class SceneManager {
     const hemi = new THREE.HemisphereLight(0xb8c8e0, 0x4a3a2a, 0.7);
     this.scene.add(hemi);
 
-    const sun = new THREE.DirectionalLight(0xfff0d0, 1.3);
-    sun.position.set(40, 60, 20);
-    sun.castShadow = true;
-    sun.shadow.mapSize.set(2048, 2048);
-    sun.shadow.camera.left = -60;
-    sun.shadow.camera.right = 60;
-    sun.shadow.camera.top = 60;
-    sun.shadow.camera.bottom = -60;
-    sun.shadow.camera.near = 0.5;
-    sun.shadow.camera.far = 200;
-    sun.shadow.bias = -0.0005;
-    this.scene.add(sun);
+    this.sun = new THREE.DirectionalLight(0xfff0d0, 1.3);
+    this.sun.position.set(40, 60, 20);
+    this.sun.castShadow = true;
+    this.sun.shadow.mapSize.set(2048, 2048);
+    // Large shadow camera bounds to cover the whole map.
+    this.sun.shadow.camera.left = -120;
+    this.sun.shadow.camera.right = 120;
+    this.sun.shadow.camera.top = 80;
+    this.sun.shadow.camera.bottom = -80;
+    this.sun.shadow.camera.near = 0.5;
+    this.sun.shadow.camera.far = 300;
+    this.sun.shadow.bias = -0.0005;
+    this.scene.add(this.sun);
+    this.scene.add(this.sun.target);
 
     // Ambient fill so shadows aren't pure black.
     this.scene.add(new THREE.AmbientLight(0x404050, 0.4));
@@ -338,6 +343,16 @@ export class SceneManager {
       this.followPosition.z + offsetZ
     );
     this.camera.lookAt(this.followPosition);
+
+    // Move the sun to follow the player so shadows are always cast near
+    // the player. The sun's position is offset from the player.
+    this.sun.position.set(
+      this.followPosition.x + 40,
+      60,
+      this.followPosition.z + 20
+    );
+    this.sun.target.position.copy(this.followPosition);
+    this.sun.target.updateMatrixWorld();
     void alpha;
   }
 

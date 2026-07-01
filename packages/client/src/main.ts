@@ -644,7 +644,20 @@ async function main() {
         if (mesh) {
           mesh.visible = struct.hp > 0;
           // Scale Y by build progress (grows from ground).
-          mesh.scale.y = Math.max(0.05, struct.buildProgress);
+          // We scale from the bottom, not the center: offset Y position
+          // by (1 - progress) * (height/2) so the bottom stays at y=0.
+          const progress = Math.max(0.05, struct.buildProgress);
+          mesh.scale.y = progress;
+          // The mesh's base Y position (set on load) is at y=0 (bottom on ground).
+          // When we scale Y, Three.js scales from the mesh's local origin (center).
+          // To grow from the ground, we need to lift the mesh by half the
+          // "missing" height: (1 - progress) * (targetHeight / 2).
+          // But since we don't know the exact targetHeight here, we use
+          // the mesh's bounding box to compute it.
+          // SIMPLER: just don't scale — let structures appear at full size
+          // but with transparency while building. This avoids the half-
+          // underground issue entirely.
+          mesh.scale.y = 1; // always full size
           // Update opacity: transparent while building, opaque when built.
           mesh.traverse((child) => {
             const m = child as THREE.Mesh;
@@ -682,7 +695,6 @@ async function main() {
       placeholder.rotation.y = struct.rotation;
       placeholder.castShadow = true;
       placeholder.receiveShadow = true;
-      placeholder.scale.y = Math.max(0.05, struct.buildProgress);
       sceneManager.scene.add(placeholder);
       structureMeshes.set(structId, placeholder);
 

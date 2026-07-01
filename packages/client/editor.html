@@ -5,51 +5,111 @@
   <title>Rift & Raid — Map Editor</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
-    body { background: #1a1a2e; color: #eee; font-family: -apple-system, sans-serif; overflow: hidden; }
-    #toolbar { position: fixed; top: 0; left: 0; right: 0; height: 50px; background: rgba(0,0,0,0.8); display: flex; align-items: center; gap: 12px; padding: 0 16px; z-index: 10; border-bottom: 1px solid rgba(255,255,255,0.1); }
-    #toolbar button { padding: 8px 14px; background: rgba(74,144,226,0.2); border: 1px solid #4a90e2; color: #4a90e2; border-radius: 4px; cursor: pointer; font-family: inherit; font-size: 13px; }
-    #toolbar button:hover { background: rgba(74,144,226,0.4); }
-    #toolbar button.active { background: #4a90e2; color: white; }
-    #toolbar .sep { width: 1px; height: 24px; background: rgba(255,255,255,0.1); }
-    #toolbar label { font-size: 12px; color: #889; }
-    #sidebar { position: fixed; top: 50px; right: 0; width: 280px; bottom: 0; background: rgba(0,0,0,0.7); padding: 16px; overflow-y: auto; z-index: 5; border-left: 1px solid rgba(255,255,255,0.1); }
-    #sidebar h3 { font-size: 13px; color: #4a90e2; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.1em; }
-    #sidebar .prop { margin-bottom: 12px; }
-    #sidebar .prop label { display: block; font-size: 11px; color: #889; margin-bottom: 4px; }
-    #sidebar .prop input, #sidebar .prop select { width: 100%; padding: 6px 8px; background: rgba(0,0,0,0.5); border: 1px solid rgba(255,255,255,0.15); border-radius: 4px; color: white; font-family: inherit; font-size: 13px; }
-    #info { position: fixed; bottom: 8px; left: 8px; font-size: 11px; color: #889; font-family: monospace; z-index: 5; background: rgba(0,0,0,0.6); padding: 6px 10px; border-radius: 4px; }
-    canvas { display: block; cursor: crosshair; }
-    .hidden { display: none; }
+    body { background: #1a1a1a; color: #ccc; font-family: -apple-system, sans-serif; overflow: hidden; user-select: none; }
+
+    /* ── Menu bar ── */
+    #menubar { position: fixed; top: 0; left: 0; right: 0; height: 32px; background: #2a2a2a; display: flex; align-items: center; padding: 0 8px; gap: 4px; z-index: 100; border-bottom: 1px solid #1a1a1a; }
+    #menubar .menu { padding: 4px 12px; font-size: 12px; cursor: pointer; border-radius: 3px; }
+    #menubar .menu:hover { background: #3a3a3a; }
+    #menubar .sep { width: 1px; height: 18px; background: #444; margin: 0 4px; }
+
+    /* ── Toolbar ── */
+    #toolbar { position: fixed; top: 32px; left: 0; width: 48px; bottom: 0; background: #2a2a2a; display: flex; flex-direction: column; align-items: center; padding: 8px 0; gap: 4px; z-index: 90; border-right: 1px solid #1a1a1a; }
+    #toolbar .tool { width: 36px; height: 36px; display: flex; align-items: center; justify-content: center; border-radius: 4px; cursor: pointer; font-size: 16px; color: #888; transition: all 0.1s; }
+    #toolbar .tool:hover { background: #3a3a3a; color: #ccc; }
+    #toolbar .tool.active { background: #4a90e2; color: white; }
+    #toolbar .sep { width: 28px; height: 1px; background: #444; margin: 4px 0; }
+
+    /* ── Viewport ── */
+    #viewport { position: fixed; top: 32px; left: 48px; right: 300px; bottom: 28px; }
+    canvas { display: block; cursor: default; }
+
+    /* ── Outliner (right panel) ── */
+    #outliner { position: fixed; top: 32px; right: 0; width: 300px; bottom: 28px; background: #2a2a2a; z-index: 80; border-left: 1px solid #1a1a1a; display: flex; flex-direction: column; }
+    #outliner .header { padding: 8px 12px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.1em; color: #889; border-bottom: 1px solid #1a1a1a; }
+    #outliner-list { flex: 1; overflow-y: auto; padding: 4px 0; }
+    #outliner-list .item { padding: 4px 12px; font-size: 12px; cursor: pointer; display: flex; align-items: center; gap: 6px; }
+    #outliner-list .item:hover { background: #333; }
+    #outliner-list .item.selected { background: #4a90e2; color: white; }
+    #outliner-list .item .icon { font-size: 14px; }
+    #outliner-list .item .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    #details { border-top: 1px solid #1a1a1a; max-height: 250px; overflow-y: auto; }
+    #details .header { padding: 8px 12px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.1em; color: #889; border-bottom: 1px solid #1a1a1a; }
+    #details .prop { padding: 6px 12px; display: flex; align-items: center; gap: 8px; }
+    #details .prop label { font-size: 11px; color: #889; width: 60px; }
+    #details .prop input, #details .prop select { flex: 1; padding: 4px 6px; background: #1a1a1a; border: 1px solid #444; border-radius: 3px; color: #ccc; font-size: 12px; font-family: inherit; }
+    #details .empty { padding: 16px 12px; font-size: 11px; color: #555; text-align: center; }
+
+    /* ── Status bar ── */
+    #statusbar { position: fixed; bottom: 0; left: 0; right: 0; height: 28px; background: #2a2a2a; display: flex; align-items: center; padding: 0 12px; font-size: 11px; color: #889; z-index: 100; border-top: 1px solid #1a1a1a; gap: 16px; }
+    #statusbar .sep { width: 1px; height: 14px; background: #444; }
+
+    /* ── Context menu ── */
+    #context-menu { position: fixed; background: #2a2a2a; border: 1px solid #444; border-radius: 4px; z-index: 200; display: none; box-shadow: 0 4px 12px rgba(0,0,0,0.5); }
+    #context-menu .item { padding: 6px 16px; font-size: 12px; cursor: pointer; }
+    #context-menu .item:hover { background: #3a3a3a; }
+    #context-menu .sep { height: 1px; background: #444; margin: 2px 0; }
   </style>
 </head>
 <body>
+  <!-- Menu bar -->
+  <div id="menubar">
+    <div class="menu" id="menu-file">File</div>
+    <div class="menu" id="menu-edit">Edit</div>
+    <div class="menu" id="menu-view">View</div>
+    <div class="sep"></div>
+    <div class="menu" id="menu-save">💾 Save</div>
+    <div class="menu" id="menu-load">📂 Load</div>
+    <div class="menu" id="menu-export">📤 Export</div>
+    <div class="sep"></div>
+    <div class="menu" id="menu-play">▶ Play</div>
+  </div>
+
+  <!-- Toolbar -->
   <div id="toolbar">
-    <button id="btn-select" class="active">Select</button>
-    <button id="btn-iron">+ Iron</button>
-    <button id="btn-emberwood">+ Wood</button>
-    <button id="btn-godshard">+ Godshard</button>
-    <button id="btn-structure">+ Structure</button>
-    <button id="btn-spawn">+ Spawn</button>
+    <div class="tool active" id="tool-select" title="Select (Q)">✋</div>
+    <div class="tool" id="tool-translate" title="Move (W)">↔</div>
+    <div class="tool" id="tool-rotate" title="Rotate (E)">↻</div>
     <div class="sep"></div>
-    <button id="btn-delete">Delete</button>
+    <div class="tool" id="tool-iron" title="Add Iron Node">⛏</div>
+    <div class="tool" id="tool-wood" title="Add Wood Node">🌲</div>
+    <div class="tool" id="tool-godshard" title="Add Godshard Node">💎</div>
+    <div class="tool" id="tool-wall" title="Add Stone Wall">🧱</div>
+    <div class="tool" id="tool-wallwood" title="Add Wood Wall">🪵</div>
+    <div class="tool" id="tool-tower" title="Add Tower">🗼</div>
+    <div class="tool" id="tool-fence" title="Add Barricade">🚧</div>
     <div class="sep"></div>
-    <button id="btn-save">Save JSON</button>
-    <button id="btn-load">Load JSON</button>
-    <button id="btn-export">Export to Server</button>
-    <div class="sep"></div>
-    <label>Grid: <input type="checkbox" id="toggle-grid" checked></label>
+    <div class="tool" id="tool-delete" title="Delete (Del)">🗑</div>
   </div>
 
-  <div id="sidebar">
-    <h3>Properties</h3>
-    <div id="props">
-      <p style="color:#666;font-size:12px;">Select an object to edit its properties.</p>
+  <!-- Viewport -->
+  <div id="viewport"></div>
+
+  <!-- Outliner + Details -->
+  <div id="outliner">
+    <div class="header">Outliner</div>
+    <div id="outliner-list"></div>
+    <div id="details">
+      <div class="header">Details</div>
+      <div id="details-content">
+        <div class="empty">Select an object to edit</div>
+      </div>
     </div>
-    <h3 style="margin-top:20px;">Map Info</h3>
-    <div id="map-info" style="font-size:12px;color:#889;line-height:1.6;"></div>
   </div>
 
-  <div id="info">Click to place · Drag to move · Right-click to delete · Scroll to zoom</div>
+  <!-- Status bar -->
+  <div id="statusbar">
+    <span id="status-tool">Tool: Select</span>
+    <div class="sep"></div>
+    <span id="status-objects">0 objects</span>
+    <div class="sep"></div>
+    <span id="status-pos">—</span>
+    <div class="sep"></div>
+    <span style="margin-left:auto">LMB: select · RMB+drag: orbit · MMB+drag: pan · Wheel: zoom</span>
+  </div>
+
+  <!-- Context menu -->
+  <div id="context-menu"></div>
 
   <script type="importmap">
   {
@@ -61,6 +121,7 @@
   </script>
   <script type="module">
     import * as THREE from 'three';
+    import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 
     // ── Map data ──
     const mapData = {
@@ -75,38 +136,53 @@
 
     let selectedObj = null;
     let currentTool = 'select';
+    let transformMode = 'translate'; // translate | rotate
+    let objectIdCounter = 0;
 
     // ── Three.js setup ──
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x2a3a4a);
-    scene.fog = new THREE.Fog(0x2a3a4a, 80, 200);
+    scene.background = new THREE.Color(0x1a2a1a);
+    scene.fog = new THREE.Fog(0x1a2a1a, 100, 250);
 
-    const camera = new THREE.PerspectiveCamera(50, (window.innerWidth - 280) / (window.innerHeight - 50), 0.1, 500);
-    camera.position.set(0, 80, 80);
-    camera.lookAt(0, 0, -40);
+    const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 500);
+
+    // Camera orbit state
+    let camYaw = 0.8, camPitch = 0.6, camDist = 60;
+    let camTarget = new THREE.Vector3(0, 0, -40);
+
+    function updateCamera() {
+      camera.position.x = camTarget.x + Math.sin(camYaw) * Math.cos(camPitch) * camDist;
+      camera.position.y = camTarget.y + Math.sin(camPitch) * camDist;
+      camera.position.z = camTarget.z + Math.cos(camYaw) * Math.cos(camPitch) * camDist;
+      camera.lookAt(camTarget);
+    }
+    updateCamera();
 
     const renderer = new THREE.WebGLRenderer({ antialias: true });
-    renderer.setSize(window.innerWidth - 280, window.innerHeight - 50);
+    renderer.setSize(window.innerWidth - 48 - 300, window.innerHeight - 32 - 28);
     renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     renderer.outputColorSpace = THREE.SRGBColorSpace;
-    document.body.appendChild(renderer.domElement);
+    document.getElementById('viewport').appendChild(renderer.domElement);
 
     // Lights
     scene.add(new THREE.HemisphereLight(0xffffff, 0x443322, 0.8));
-    const dirLight = new THREE.DirectionalLight(0xffffff, 1.2);
-    dirLight.position.set(40, 60, 20);
-    dirLight.castShadow = true;
-    dirLight.shadow.mapSize.set(2048, 2048);
-    dirLight.shadow.camera.left = -100;
-    dirLight.shadow.camera.right = 100;
-    dirLight.shadow.camera.top = 50;
-    dirLight.shadow.camera.bottom = -100;
-    scene.add(dirLight);
+    const sun = new THREE.DirectionalLight(0xffffff, 1.3);
+    sun.position.set(50, 80, 30);
+    sun.castShadow = true;
+    sun.shadow.mapSize.set(2048, 2048);
+    sun.shadow.camera.left = -100;
+    sun.shadow.camera.right = 100;
+    sun.shadow.camera.top = 80;
+    sun.shadow.camera.bottom = -80;
+    sun.shadow.camera.far = 300;
+    scene.add(sun);
+    scene.add(sun.target);
 
     // Ground
     const ground = new THREE.Mesh(
       new THREE.PlaneGeometry(mapData.worldSize.width, mapData.worldSize.depth),
-      new THREE.MeshStandardMaterial({ color: 0x3a5a3a })
+      new THREE.MeshStandardMaterial({ color: 0x2a4a2a, roughness: 0.9 })
     );
     ground.rotation.x = -Math.PI / 2;
     ground.position.z = -mapData.worldSize.depth / 2;
@@ -114,67 +190,181 @@
     scene.add(ground);
 
     // Grid
-    const grid = new THREE.GridHelper(Math.max(mapData.worldSize.width, mapData.worldSize.depth), 40, 0x556677, 0x334455);
-    grid.position.z = -mapData.worldSize.depth / 2;
-    grid.position.y = 0.01;
+    const grid = new THREE.GridHelper(200, 40, 0x4a6a4a, 0x334433);
+    grid.position.set(0, 0.01, -mapData.worldSize.depth / 2);
     scene.add(grid);
 
     // Base markers
+    const baseColors = { solari: 0xe07b3a, lunari: 0x4a90e2 };
     for (const spawn of mapData.spawnPoints) {
-      const color = spawn.faction === 'solari' ? 0xe07b3a : 0x4a90e2;
       const marker = new THREE.Mesh(
-        new THREE.CylinderGeometry(4, 4, 0.5, 16),
-        new THREE.MeshStandardMaterial({ color, transparent: true, opacity: 0.6 })
+        new THREE.CylinderGeometry(5, 5, 0.5, 24),
+        new THREE.MeshStandardMaterial({ color: baseColors[spawn.faction], transparent: true, opacity: 0.5 })
       );
       marker.position.set(spawn.x, 0.25, spawn.z);
-      marker.userData = { type: 'spawn', data: spawn };
+      marker.userData = { type: 'spawn', data: spawn, name: `${spawn.faction} spawn` };
       scene.add(marker);
     }
 
-    // ── Object management ──
-    const objects = []; // { mesh, data, type }
+    // ── GLTF loader with texture redirect ──
+    const manager = new THREE.LoadingManager();
+    manager.setURLModifier((url) => {
+      if (/^https?:\/\//i.test(url)) return url;
+      if (/\.(png|jpe?g|webp|ktx2|tga|bmp|gif)$/i.test(url)) {
+        const filename = (url.split('/').pop() ?? url).toLowerCase();
+        let pack = 'default';
+        if (url.includes('/characters/')) pack = 'characters';
+        else if (url.includes('/props/')) pack = 'props';
+        else if (url.includes('/structures/')) pack = 'structures';
+        if (filename === 'colormap.png') return `/textures/${pack}-colormap.png`;
+        return `/textures/${filename}`;
+      }
+      return url;
+    });
+    const gltfLoader = new GLTFLoader(manager);
 
-    function createNode(type, x, z) {
-      const colors = { iron: 0x808890, emberwood: 0x6a4a2a, godshard: 0xb080ff };
-      const mesh = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.6, 0.8, 1.5, 8),
-        new THREE.MeshStandardMaterial({ color: colors[type] })
-      );
-      mesh.position.set(x, 0.75, z);
-      mesh.castShadow = true;
-      const data = { id: `node_${Date.now()}`, type, x, y: 0, z, hp: 50, maxHp: 50 };
-      mesh.userData = { type: 'node', data };
-      scene.add(mesh);
-      objects.push(mesh);
-      mapData.resourceNodes.push(data);
-      return mesh;
+    function loadGLB(url) {
+      return new Promise((resolve, reject) => {
+        gltfLoader.load(url, (gltf) => {
+          const model = gltf.scene;
+          // Convert SkinnedMesh → Mesh
+          const toReplace = [];
+          model.traverse((child) => {
+            const obj = child;
+            if (!obj.geometry) return;
+            if (obj.isSkinnedMesh) {
+              toReplace.push({ mesh: obj, parent: obj.parent, geo: obj.geometry, mat: obj.material, world: obj.matrixWorld.clone() });
+            } else {
+              obj.castShadow = true;
+              obj.receiveShadow = true;
+              obj.frustumCulled = false;
+              if (obj.material) {
+                const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
+                for (const m of mats) { m.side = THREE.DoubleSide; m.needsUpdate = true; }
+              }
+            }
+          });
+          for (const item of toReplace) {
+            const newGeo = item.geo.clone();
+            delete newGeo.attributes.skinIndex;
+            delete newGeo.attributes.skinWeight;
+            const newMesh = new THREE.Mesh(newGeo, item.mat);
+            newMesh.matrix.copy(item.world);
+            newMesh.matrixAutoUpdate = false;
+            newMesh.castShadow = true;
+            newMesh.receiveShadow = true;
+            newMesh.frustumCulled = false;
+            if (newMesh.material) {
+              const mats = Array.isArray(newMesh.material) ? newMesh.material : [newMesh.material];
+              for (const m of mats) { m.side = THREE.DoubleSide; m.needsUpdate = true; }
+            }
+            item.parent.remove(item.mesh);
+            item.parent.add(newMesh);
+          }
+          resolve(model);
+        }, undefined, reject);
+      });
     }
 
-    function createStructure(x, z) {
-      const mesh = new THREE.Mesh(
-        new THREE.BoxGeometry(2, 2, 0.5),
-        new THREE.MeshStandardMaterial({ color: 0x8a7a6a })
-      );
-      mesh.position.set(x, 1, z);
-      mesh.castShadow = true;
-      const data = { id: `struct_${Date.now()}`, type: 'wall_stone', x, y: 0, z, rotation: 0 };
-      mesh.userData = { type: 'structure', data };
+    // ── Object creation ──
+    const allObjects = []; // { mesh, data, type, name, id }
+
+    function createObject(type, x, z) {
+      let mesh, data, name;
+      const id = ++objectIdCounter;
+
+      if (type === 'iron' || type === 'emberwood' || type === 'godshard') {
+        const colors = { iron: 0x808890, emberwood: 0x6a4a2a, godshard: 0xb080ff };
+        mesh = new THREE.Mesh(
+          new THREE.CylinderGeometry(0.6, 0.8, 1.5, 8),
+          new THREE.MeshStandardMaterial({ color: colors[type] })
+        );
+        mesh.position.set(x, 0.75, z);
+        mesh.castShadow = true;
+        data = { id: `node_${id}`, resourceType: type, x, y: 0, z, hp: 50, maxHp: 50 };
+        name = `${type} node`;
+        // Load real model
+        const urls = { iron: '/props/detail-rocks.glb', emberwood: '/props/detail-tree.glb', godshard: '/props/detail-crystal.glb' };
+        loadGLB(urls[type]).then((model) => {
+          const box = new THREE.Box3().setFromObject(model);
+          const size = new THREE.Vector3(); box.getSize(size);
+          if (size.y > 0.001) model.scale.setScalar(1.5 / size.y);
+          const box2 = new THREE.Box3().setFromObject(model);
+          model.position.x = x - (box2.min.x + box2.max.x) / 2;
+          model.position.z = z - (box2.min.z + box2.max.z) / 2;
+          model.position.y = -box2.min.y;
+          scene.remove(mesh);
+          scene.add(model);
+          obj.mesh = model;
+        }).catch(() => {});
+      } else if (type === 'wall_stone' || type === 'wall_wood' || type === 'tower' || type === 'barricade') {
+        const colors = { wall_stone: 0x8a8a8a, wall_wood: 0x8a6a4a, tower: 0x6a6a7a, barricade: 0x7a5a3a };
+        mesh = new THREE.Mesh(
+          new THREE.BoxGeometry(2, 2.5, 0.5),
+          new THREE.MeshStandardMaterial({ color: colors[type] })
+        );
+        mesh.position.set(x, 1.25, z);
+        mesh.castShadow = true;
+        mesh.receiveShadow = true;
+        data = { id: `struct_${id}`, structureType: type, faction: 'solari', x, y: 0, z, rotation: 0, hp: 100, maxHp: 100, buildProgress: 1, built: true };
+        name = type.replace('_', ' ');
+        // Load real model
+        const urls = { wall_stone: '/structures/wall.glb', wall_wood: '/structures/wall-wood.glb', tower: '/structures/tower-square-build-a.glb', barricade: '/structures/fence.glb' };
+        loadGLB(urls[type]).then((model) => {
+          const box = new THREE.Box3().setFromObject(model);
+          const size = new THREE.Vector3(); box.getSize(size);
+          if (size.y > 0.001) model.scale.setScalar(2.5 / size.y);
+          const box2 = new THREE.Box3().setFromObject(model);
+          model.position.x = x - (box2.min.x + box2.max.x) / 2;
+          model.position.z = z - (box2.min.z + box2.max.z) / 2;
+          model.position.y = -box2.min.y;
+          scene.remove(mesh);
+          scene.add(model);
+          obj.mesh = model;
+        }).catch(() => {});
+      }
+
       scene.add(mesh);
-      objects.push(mesh);
-      mapData.structures.push(data);
-      return mesh;
+      const obj = { mesh, data, type, name, id };
+      mesh.userData = { obj };
+      allObjects.push(obj);
+
+      if (type === 'iron' || type === 'emberwood' || type === 'godshard') {
+        mapData.resourceNodes.push(data);
+      } else {
+        mapData.structures.push(data);
+      }
+
+      refreshOutliner();
+      return obj;
     }
 
-    // ── Interaction ──
+    function deleteObject(obj) {
+      scene.remove(obj.mesh);
+      const idx = allObjects.indexOf(obj);
+      if (idx >= 0) allObjects.splice(idx, 1);
+      if (obj.type === 'iron' || obj.type === 'emberwood' || obj.type === 'godshard') {
+        mapData.resourceNodes = mapData.resourceNodes.filter(n => n.id !== obj.data.id);
+      } else {
+        mapData.structures = mapData.structures.filter(s => s.id !== obj.data.id);
+      }
+      if (selectedObj === obj) { selectedObj = null; updateDetails(); }
+      refreshOutliner();
+    }
+
+    // ── Selection ──
     const raycaster = new THREE.Raycaster();
     const mouse = new THREE.Vector2();
     let isDragging = false;
+    let isOrbiting = false;
+    let isPanning = false;
+    let lastX = 0, lastY = 0;
     let dragOffset = new THREE.Vector3();
 
-    function getGroundPoint(event) {
+    function getGroundPoint(e) {
       const rect = renderer.domElement.getBoundingClientRect();
-      mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
-      mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+      mouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+      mouse.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
       raycaster.setFromCamera(mouse, camera);
       const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
       const point = new THREE.Vector3();
@@ -182,153 +372,208 @@
       return point;
     }
 
-    function getObjectAtMouse(event) {
+    function pickObject(e) {
       const rect = renderer.domElement.getBoundingClientRect();
-      mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
-      mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+      mouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+      mouse.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
       raycaster.setFromCamera(mouse, camera);
-      const meshes = objects.concat(scene.children.filter(c => c.userData?.type === 'spawn'));
-      const intersects = raycaster.intersectObjects(meshes);
-      return intersects.length > 0 ? intersects[0].object : null;
+      const meshes = allObjects.map(o => o.mesh).concat(scene.children.filter(c => c.userData?.type === 'spawn'));
+      const hits = raycaster.intersectObjects(meshes, true);
+      if (hits.length > 0) {
+        let obj = hits[0].object;
+        while (obj && !obj.userData?.obj) obj = obj.parent;
+        if (obj?.userData?.obj) return obj.userData.obj;
+        if (hits[0].object.userData?.type === 'spawn') return { mesh: hits[0].object, data: hits[0].object.userData.data, type: 'spawn', name: hits[0].object.userData.name, id: 0 };
+      }
+      return null;
     }
 
     renderer.domElement.addEventListener('mousedown', (e) => {
-      const point = getGroundPoint(e);
-
-      if (e.button === 2) {
-        // Right-click: delete
-        const obj = getObjectAtMouse(e);
-        if (obj && obj.userData?.data) {
-          const data = obj.userData.data;
-          if (obj.userData.type === 'node') {
-            mapData.resourceNodes = mapData.resourceNodes.filter(n => n.id !== data.id);
-          } else if (obj.userData.type === 'structure') {
-            mapData.structures = mapData.structures.filter(s => s.id !== data.id);
-          }
-          scene.remove(obj);
-          objects.splice(objects.indexOf(obj), 1);
-          if (selectedObj === obj) { selectedObj = null; updateProps(); }
-        }
-        return;
-      }
-
-      if (currentTool === 'select') {
-        const obj = getObjectAtMouse(e);
-        if (obj) {
+      if (e.button === 0) { // left
+        if (currentTool === 'select' || currentTool === 'translate' || currentTool === 'rotate') {
+          const obj = pickObject(e);
           selectedObj = obj;
-          isDragging = true;
-          const objPos = obj.position;
-          dragOffset.copy(objPos).sub(point);
-          dragOffset.y = 0;
+          updateDetails();
+          refreshOutliner();
+          if (obj && currentTool === 'translate') {
+            isDragging = true;
+            const point = getGroundPoint(e);
+            dragOffset.copy(obj.mesh.position).sub(point);
+            dragOffset.y = 0;
+          }
         } else {
-          selectedObj = null;
+          // Placement tools
+          const point = getGroundPoint(e);
+          if (point) {
+            const typeMap = { iron: 'iron', wood: 'emberwood', godshard: 'godshard', wall: 'wall_stone', wallwood: 'wall_wood', tower: 'tower', fence: 'barricade' };
+            const obj = createObject(typeMap[currentTool], point.x, point.z);
+            selectedObj = obj;
+            updateDetails();
+            refreshOutliner();
+          }
         }
-        updateProps();
-      } else if (currentTool === 'iron') {
-        selectedObj = createNode('iron', point.x, point.z);
-        updateProps();
-      } else if (currentTool === 'emberwood') {
-        selectedObj = createNode('emberwood', point.x, point.z);
-        updateProps();
-      } else if (currentTool === 'godshard') {
-        selectedObj = createNode('godshard', point.x, point.z);
-        updateProps();
-      } else if (currentTool === 'structure') {
-        selectedObj = createStructure(point.x, point.z);
-        updateProps();
+      } else if (e.button === 2) { // right = orbit
+        isOrbiting = true;
+        lastX = e.clientX;
+        lastY = e.clientY;
+      } else if (e.button === 1) { // middle = pan
+        isPanning = true;
+        lastX = e.clientX;
+        lastY = e.clientY;
       }
     });
 
-    renderer.domElement.addEventListener('mousemove', (e) => {
+    window.addEventListener('mousemove', (e) => {
+      const rect = renderer.domElement.getBoundingClientRect();
+      const point = getGroundPoint(e);
+      if (point) document.getElementById('status-pos').textContent = `X: ${point.x.toFixed(1)} Z: ${point.z.toFixed(1)}`;
+
       if (isDragging && selectedObj) {
-        const point = getGroundPoint(e);
-        selectedObj.position.x = point.x + dragOffset.x;
-        selectedObj.position.z = point.z + dragOffset.z;
-        const data = selectedObj.userData.data;
-        data.x = selectedObj.position.x;
-        data.z = selectedObj.position.z;
-        updateProps();
+        const p = getGroundPoint(e);
+        if (p) {
+          selectedObj.mesh.position.x = p.x + dragOffset.x;
+          selectedObj.mesh.position.z = p.z + dragOffset.z;
+          selectedObj.data.x = selectedObj.mesh.position.x;
+          selectedObj.data.z = selectedObj.mesh.position.z;
+          updateDetails();
+        }
+      } else if (isOrbiting) {
+        camYaw -= (e.clientX - lastX) * 0.005;
+        camPitch = Math.max(0.1, Math.min(1.4, camPitch + (e.clientY - lastY) * 0.005));
+        lastX = e.clientX;
+        lastY = e.clientY;
+        updateCamera();
+      } else if (isPanning) {
+        const dx = (e.clientX - lastX) * 0.05;
+        const dy = (e.clientY - lastY) * 0.05;
+        const right = new THREE.Vector3(1, 0, 0).applyQuaternion(camera.quaternion);
+        const up = new THREE.Vector3(0, 1, 0).applyQuaternion(camera.quaternion);
+        camTarget.addScaledVector(right, -dx);
+        camTarget.addScaledVector(up, dy);
+        lastX = e.clientX;
+        lastY = e.clientY;
+        updateCamera();
       }
     });
 
-    renderer.domElement.addEventListener('mouseup', () => { isDragging = false; });
-    renderer.domElement.addEventListener('contextmenu', (e) => e.preventDefault());
+    window.addEventListener('mouseup', (e) => {
+      if (e.button === 0) isDragging = false;
+      if (e.button === 2) isOrbiting = false;
+      if (e.button === 1) isPanning = false;
+    });
 
-    // Zoom
     renderer.domElement.addEventListener('wheel', (e) => {
       e.preventDefault();
-      const delta = e.deltaY * 0.05;
-      camera.position.y = Math.max(20, Math.min(150, camera.position.y + delta));
-      camera.position.z = Math.max(20, Math.min(150, camera.position.z + delta));
-      camera.lookAt(0, 0, -40);
+      camDist = Math.max(10, Math.min(150, camDist + e.deltaY * 0.05));
+      updateCamera();
     });
 
-    // ── Tool buttons ──
-    const tools = ['select', 'iron', 'emberwood', 'godshard', 'structure', 'spawn'];
-    const toolButtons = {
-      select: document.getElementById('btn-select'),
-      iron: document.getElementById('btn-iron'),
-      emberwood: document.getElementById('btn-emberwood'),
-      godshard: document.getElementById('btn-godshard'),
-      structure: document.getElementById('btn-structure'),
-      spawn: document.getElementById('btn-spawn'),
-    };
+    renderer.domElement.addEventListener('contextmenu', (e) => e.preventDefault());
+
+    // ── Keyboard ──
+    window.addEventListener('keydown', (e) => {
+      if (e.code === 'KeyQ') { setTool('select'); }
+      if (e.code === 'KeyW') { setTool('translate'); }
+      if (e.code === 'KeyE') { setTool('rotate'); }
+      if (e.code === 'Delete' && selectedObj) { deleteObject(selectedObj); }
+      if (e.code === 'Escape') { selectedObj = null; updateDetails(); refreshOutliner(); }
+      // Rotate selected object
+      if (e.code === 'KeyR' && selectedObj && selectedObj.type !== 'spawn') {
+        selectedObj.data.rotation = (selectedObj.data.rotation || 0) + Math.PI / 4;
+        selectedObj.mesh.rotation.y = selectedObj.data.rotation;
+        updateDetails();
+      }
+    });
+
+    // ── Tools ──
+    const tools = ['select', 'translate', 'rotate', 'iron', 'wood', 'godshard', 'wall', 'wallwood', 'tower', 'fence', 'delete'];
+    const toolBtns = {};
     for (const t of tools) {
-      toolButtons[t].onclick = () => {
-        currentTool = t;
-        for (const tt of tools) {
-          toolButtons[tt].classList.toggle('active', tt === t);
-        }
-      };
+      const btn = document.getElementById('tool-' + t);
+      if (btn) { toolBtns[t] = btn; btn.onclick = () => setTool(t); }
     }
 
-    // ── Properties panel ──
-    function updateProps() {
-      const propsEl = document.getElementById('props');
-      if (!selectedObj || !selectedObj.userData?.data) {
-        propsEl.innerHTML = '<p style="color:#666;font-size:12px;">Select an object to edit its properties.</p>';
-        updateMapInfo();
+    function setTool(t) {
+      if (t === 'delete' && selectedObj) { deleteObject(selectedObj); return; }
+      currentTool = t;
+      for (const tt of tools) {
+        if (toolBtns[tt]) toolBtns[tt].classList.toggle('active', tt === t);
+      }
+      const labels = { select: 'Select', translate: 'Move', rotate: 'Rotate', iron: 'Add Iron', wood: 'Add Wood', godshard: 'Add Godshard', wall: 'Add Stone Wall', wallwood: 'Add Wood Wall', tower: 'Add Tower', fence: 'Add Barricade' };
+      document.getElementById('status-tool').textContent = `Tool: ${labels[t] || t}`;
+    }
+
+    // ── Outliner ──
+    function refreshOutliner() {
+      const list = document.getElementById('outliner-list');
+      list.innerHTML = '';
+      // Spawn points
+      for (const child of scene.children) {
+        if (child.userData?.type === 'spawn') {
+          const item = document.createElement('div');
+          item.className = 'item';
+          item.innerHTML = `<span class="icon">📍</span><span class="name">${child.userData.name}</span>`;
+          item.onclick = () => { selectedObj = { mesh: child, data: child.userData.data, type: 'spawn', name: child.userData.name, id: 0 }; updateDetails(); refreshOutliner(); };
+          list.appendChild(item);
+        }
+      }
+      for (const obj of allObjects) {
+        const item = document.createElement('div');
+        item.className = 'item' + (selectedObj === obj ? ' selected' : '');
+        const icons = { iron: '⛏', emberwood: '🌲', godshard: '💎', wall_stone: '🧱', wall_wood: '🪵', tower: '🗼', barricade: '🚧' };
+        item.innerHTML = `<span class="icon">${icons[obj.type] || '📦'}</span><span class="name">${obj.name}</span>`;
+        item.onclick = () => { selectedObj = obj; updateDetails(); refreshOutliner(); };
+        list.appendChild(item);
+      }
+      document.getElementById('status-objects').textContent = `${allObjects.length} objects`;
+    }
+
+    // ── Details panel ──
+    function updateDetails() {
+      const el = document.getElementById('details-content');
+      if (!selectedObj) {
+        el.innerHTML = '<div class="empty">Select an object to edit</div>';
         return;
       }
-      const data = selectedObj.userData.data;
-      const type = selectedObj.userData.type;
-      let html = `<div class="prop"><label>Type</label><input type="text" value="${type}" disabled></div>`;
-      html += `<div class="prop"><label>X</label><input type="number" value="${data.x.toFixed(1)}" id="prop-x"></div>`;
-      html += `<div class="prop"><label>Z</label><input type="number" value="${data.z.toFixed(1)}" id="prop-z"></div>`;
-      if (type === 'structure') {
-        html += `<div class="prop"><label>Rotation</label><input type="number" value="${(data.rotation * 180 / Math.PI).toFixed(0)}" id="prop-rot"></div>`;
-        html += `<div class="prop"><label>Structure Type</label><select id="prop-type">
-          <option value="wall_stone" ${data.type === 'wall_stone' ? 'selected' : ''}>Stone Wall</option>
-          <option value="wall_wood" ${data.type === 'wall_wood' ? 'selected' : ''}>Wood Wall</option>
-          <option value="tower" ${data.type === 'tower' ? 'selected' : ''}>Tower</option>
-          <option value="barricade" ${data.type === 'barricade' ? 'selected' : ''}>Barricade</option>
-        </select></div>`;
+      const d = selectedObj.data;
+      let html = '';
+      html += `<div class="prop"><label>Type</label><input type="text" value="${selectedObj.type}" disabled></div>`;
+      html += `<div class="prop"><label>X</label><input type="number" step="0.5" value="${(d.x || 0).toFixed(1)}" id="d-x"></div>`;
+      html += `<div class="prop"><label>Z</label><input type="number" step="0.5" value="${(d.z || 0).toFixed(1)}" id="d-z"></div>`;
+      if (d.rotation !== undefined) {
+        html += `<div class="prop"><label>Rot°</label><input type="number" step="15" value="${((d.rotation || 0) * 180 / Math.PI).toFixed(0)}" id="d-rot"></div>`;
       }
-      propsEl.innerHTML = html;
+      if (d.faction !== undefined) {
+        html += `<div class="prop"><label>Faction</label><select id="d-faction"><option value="solari" ${d.faction === 'solari' ? 'selected' : ''}>Solari</option><option value="lunari" ${d.faction === 'lunari' ? 'selected' : ''}>Lunari</option></select></div>`;
+      }
+      if (d.resourceType) {
+        html += `<div class="prop"><label>Resource</label><input type="text" value="${d.resourceType}" disabled></div>`;
+      }
+      if (d.structureType) {
+        html += `<div class="prop"><label>Struct</label><input type="text" value="${d.structureType}" disabled></div>`;
+      }
+      html += `<div class="prop"><button id="d-delete" style="width:100%;padding:6px;background:#c0392b;border:none;color:white;border-radius:4px;cursor:pointer;font-size:12px;">Delete</button></div>`;
+      el.innerHTML = html;
 
-      const xInput = document.getElementById('prop-x');
-      const zInput = document.getElementById('prop-z');
-      if (xInput) xInput.oninput = () => { data.x = parseFloat(xInput.value); selectedObj.position.x = data.x; };
-      if (zInput) zInput.oninput = () => { data.z = parseFloat(zInput.value); selectedObj.position.z = data.z; };
-      const rotInput = document.getElementById('prop-rot');
-      if (rotInput) rotInput.oninput = () => { data.rotation = parseFloat(rotInput.value) * Math.PI / 180; selectedObj.rotation.y = data.rotation; };
-      const typeInput = document.getElementById('prop-type');
-      if (typeInput) typeInput.onchange = () => { data.type = typeInput.value; };
-
-      updateMapInfo();
-    }
-
-    function updateMapInfo() {
-      document.getElementById('map-info').innerHTML = `
-        Resource Nodes: ${mapData.resourceNodes.length}<br>
-        Structures: ${mapData.structures.length}<br>
-        Spawn Points: ${mapData.spawnPoints.length}<br>
-        World: ${mapData.worldSize.width}×${mapData.worldSize.depth}
-      `;
+      const xI = document.getElementById('d-x');
+      const zI = document.getElementById('d-z');
+      if (xI) xI.oninput = () => { d.x = parseFloat(xI.value); selectedObj.mesh.position.x = d.x; };
+      if (zI) zI.oninput = () => { d.z = parseFloat(zI.value); selectedObj.mesh.position.z = d.z; };
+      const rI = document.getElementById('d-rot');
+      if (rI) rI.oninput = () => { d.rotation = parseFloat(rI.value) * Math.PI / 180; selectedObj.mesh.rotation.y = d.rotation; };
+      const fI = document.getElementById('d-faction');
+      if (fI) fI.onchange = () => { d.faction = fI.value; };
+      const del = document.getElementById('d-delete');
+      if (del) del.onclick = () => { if (selectedObj) deleteObject(selectedObj); };
     }
 
     // ── Save/Load ──
-    document.getElementById('btn-save').onclick = () => {
+    document.getElementById('menu-save').onclick = () => {
+      // Sync mesh positions to data
+      for (const obj of allObjects) {
+        obj.data.x = obj.mesh.position.x;
+        obj.data.z = obj.mesh.position.z;
+      }
       const blob = new Blob([JSON.stringify(mapData, null, 2)], { type: 'application/json' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
@@ -338,7 +583,7 @@
       URL.revokeObjectURL(url);
     };
 
-    document.getElementById('btn-load').onclick = () => {
+    document.getElementById('menu-load').onclick = () => {
       const input = document.createElement('input');
       input.type = 'file';
       input.accept = '.json';
@@ -347,38 +592,28 @@
         const reader = new FileReader();
         reader.onload = () => {
           const loaded = JSON.parse(reader.result);
+          // Clear existing
+          for (const obj of allObjects) scene.remove(obj.mesh);
+          allObjects.length = 0;
+          mapData.resourceNodes = [];
+          mapData.structures = [];
           Object.assign(mapData, loaded);
-          // Clear existing objects
-          for (const obj of objects) scene.remove(obj);
-          objects.length = 0;
-          // Recreate from loaded data
-          for (const node of mapData.resourceNodes) {
-            const mesh = createNode(node.type, node.x, node.z);
-            mesh.userData.data = node;
-          }
-          for (const struct of mapData.structures) {
-            const mesh = createStructure(struct.x, struct.z);
-            mesh.userData.data = struct;
-            mesh.rotation.y = struct.rotation || 0;
-          }
-          updateProps();
-          alert('Map loaded!');
+          for (const n of mapData.resourceNodes) createObject(n.resourceType, n.x, n.z);
+          for (const s of mapData.structures) { const o = createObject(s.structureType, s.x, s.z); if (s.rotation) { o.data.rotation = s.rotation; o.mesh.rotation.y = s.rotation; } }
+          refreshOutliner();
         };
         reader.readAsText(file);
       };
       input.click();
     };
 
-    document.getElementById('btn-export').onclick = () => {
-      // Save to localStorage so the server can read it (via a fetch endpoint)
-      localStorage.setItem('rr_map', JSON.stringify(mapData));
-      alert('Map saved to localStorage. Copy the JSON and place it at packages/game/src/content/map.json');
+    document.getElementById('menu-export').onclick = () => {
+      for (const obj of allObjects) { obj.data.x = obj.mesh.position.x; obj.data.z = obj.mesh.position.z; }
       console.log('Map JSON:', JSON.stringify(mapData, null, 2));
+      alert('Map JSON printed to console. Copy and save as packages/game/src/content/map.json');
     };
 
-    document.getElementById('toggle-grid').onchange = (e) => {
-      grid.visible = e.target.checked;
-    };
+    document.getElementById('menu-play').onclick = () => { window.location.href = '/'; };
 
     // ── Render loop ──
     function animate() {
@@ -388,12 +623,12 @@
     animate();
 
     window.addEventListener('resize', () => {
-      camera.aspect = (window.innerWidth - 280) / (window.innerHeight - 50);
+      camera.aspect = (window.innerWidth - 48 - 300) / (window.innerHeight - 32 - 28);
       camera.updateProjectionMatrix();
-      renderer.setSize(window.innerWidth - 280, window.innerHeight - 50);
+      renderer.setSize(window.innerWidth - 48 - 300, window.innerHeight - 32 - 28);
     });
 
-    updateMapInfo();
+    refreshOutliner();
   </script>
 </body>
 </html>
