@@ -238,6 +238,19 @@ export class SceneManager {
     this.autoFollowEnabled = enabled;
   }
 
+  /**
+   * Apply keyboard camera rotation (arrow keys for laptop users).
+   * Called each frame with { yaw: -1|0|1, pitch: -1|0|1 }.
+   */
+  applyKeyboardCameraInput(yaw: number, pitch: number, dt: number): void {
+    if (yaw !== 0) {
+      this.yaw -= yaw * 1.5 * dt; // radians per second
+    }
+    if (pitch !== 0) {
+      this.pitch = this.clampPitch(this.pitch + pitch * 1.0 * dt);
+    }
+  }
+
   /** Current camera yaw (for camera-relative movement). */
   get cameraYaw(): number {
     return this.yaw;

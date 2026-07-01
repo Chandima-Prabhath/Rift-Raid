@@ -182,7 +182,10 @@ export class AssetLoader {
       if (m.transparent && m.opacity !== undefined && m.opacity < 0.01) {
         m.opacity = 1;
       }
-      // Ensure the material updates.
+      // Render both sides — some Kenney models have inverted normals or
+      // are designed as single-sided planes (walls, fences). Without this,
+      // you can see through the back face.
+      m.side = THREE.DoubleSide;
       m.needsUpdate = true;
     }
   }

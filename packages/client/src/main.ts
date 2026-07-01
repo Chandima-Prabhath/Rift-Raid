@@ -112,9 +112,31 @@ async function main() {
   const characterLoader = new CharacterModelLoader(assetLoader);
 
   // ── 5. World geometry ──────────────────────────────────────────────────
-  const ground = modelRenderer.createGround(WORLD_SIZE.width, WORLD_SIZE.depth, Palette.grass);
+  // Improved ground: darker green with subtle grid texture feel.
+  const ground = new THREE.Mesh(
+    new THREE.PlaneGeometry(WORLD_SIZE.width, WORLD_SIZE.depth, 1, 1),
+    new THREE.MeshStandardMaterial({
+      color: 0x3a5a3a,
+      roughness: 0.9,
+      metalness: 0.0,
+    })
+  );
+  ground.rotation.x = -Math.PI / 2;
   ground.position.z = -WORLD_SIZE.depth / 2;
+  ground.receiveShadow = true;
   sceneManager.scene.add(ground);
+
+  // Add a subtle grid overlay for visual reference.
+  const gridHelper = new THREE.GridHelper(
+    Math.max(WORLD_SIZE.width, WORLD_SIZE.depth),
+    40,
+    0x4a6a4a,
+    0x2a4a2a
+  );
+  gridHelper.position.set(0, 0.02, -WORLD_SIZE.depth / 2);
+  gridHelper.material.opacity = 0.3;
+  gridHelper.material.transparent = true;
+  sceneManager.scene.add(gridHelper);
 
   const solariBase = modelRenderer.createBox(8, 0.2, 8, Palette.solariPrimary);
   solariBase.position.set(-80, 0.1, -40);
@@ -693,13 +715,16 @@ async function main() {
         model.position.y = -box2.min.y;
         model.rotation.y = struct.rotation;
 
-        // Set initial opacity based on built state.
+        // CLONE materials for this instance. The GLB cache shares materials
+        // across all instances — if we change opacity on one, it affects ALL.
+        // Cloning ensures each structure has its own material instance.
         model.traverse((child) => {
           const m = child as THREE.Mesh;
           if (m.material) {
             const mats = Array.isArray(m.material) ? m.material : [m.material];
-            for (const mat of mats) {
-              const sm = mat as THREE.MeshStandardMaterial;
+            const newMats = mats.map(mat => {
+              const sm = (mat as THREE.MeshStandardMaterial).clone();
+              sm.side = THREE.DoubleSide;
               if (struct.built) {
                 sm.transparent = false;
                 sm.opacity = 1.0;
@@ -708,7 +733,9 @@ async function main() {
                 sm.opacity = 0.6;
               }
               sm.needsUpdate = true;
-            }
+              return sm;
+            });
+            m.material = Array.isArray(m.material) ? newMats : newMats[0];
           }
         });
 
@@ -873,9 +900,14 @@ async function main() {
 
       // Auto-camera follow is DISABLED — it caused disorienting rotation
       // when pressing non-forward keys and created a feedback loop with
-      // camera-relative movement. Players rotate the camera manually
-      // with right-click or middle-click drag.
+      // camera-relative movement. Players rotate the camera with:
+      //   - Right-click or Middle-click drag (mouse)
+      //   - Arrow keys (keyboard, for laptop users)
       cameraController.setAutoFollowYaw(null);
+
+      // Apply keyboard camera rotation (arrow keys).
+      const camInput = keyboardMouse.getCameraInput();
+      sceneManager.applyKeyboardCameraInput(camInput.yaw, camInput.pitch, dt);
 
       network.update(dt);
 

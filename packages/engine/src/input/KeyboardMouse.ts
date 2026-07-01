@@ -31,6 +31,9 @@ export class KeyboardMouse implements InputAdapter {
   private abilityQueued = false;    // Q pressed (edge-triggered)
   private dashQueued = false;       // Space pressed
   private interactQueued = false;   // E pressed
+  /** Camera rotation input from arrow keys (-1, 0, +1). */
+  private cameraYawInput = 0;
+  private cameraPitchInput = 0;
   /** Ground-projected aim point (set by external code that knows the camera). */
   private aimWorld: Vec2 = { x: 0, y: 0 };
 
@@ -86,20 +89,35 @@ export class KeyboardMouse implements InputAdapter {
     this.aimWorld.y = y;
   }
 
+  /** Get arrow-key camera rotation input: { yaw: -1|0|1, pitch: -1|0|1 }. */
+  getCameraInput(): { yaw: number; pitch: number } {
+    return { yaw: this.cameraYawInput, pitch: this.cameraPitchInput };
+  }
+
   update(state: InputState, _dt: number): void {
-    // Movement: WASD or arrow keys.
+    // Movement: WASD only (arrow keys are for camera rotation).
     let mx = 0;
     let my = 0;
-    if (this.keys['KeyW'] || this.keys['ArrowUp']) my -= 1;
-    if (this.keys['KeyS'] || this.keys['ArrowDown']) my += 1;
-    if (this.keys['KeyA'] || this.keys['ArrowLeft']) mx -= 1;
-    if (this.keys['KeyD'] || this.keys['ArrowRight']) mx += 1;
+    if (this.keys['KeyW']) my -= 1;
+    if (this.keys['KeyS']) my += 1;
+    if (this.keys['KeyA']) mx -= 1;
+    if (this.keys['KeyD']) mx += 1;
     // Normalize diagonals.
     const len = Math.hypot(mx, my);
     if (len > 0) {
       state.move.x = mx / len;
       state.move.y = my / len;
     }
+
+    // Camera rotation via arrow keys (for laptop users without mouse).
+    // Left/Right arrows rotate yaw, Up/Down arrows adjust pitch.
+    // These set flags that SceneManager reads via getCameraInput().
+    this.cameraYawInput = 0;
+    this.cameraPitchInput = 0;
+    if (this.keys['ArrowLeft']) this.cameraYawInput -= 1;
+    if (this.keys['ArrowRight']) this.cameraYawInput += 1;
+    if (this.keys['ArrowUp']) this.cameraPitchInput -= 1;
+    if (this.keys['ArrowDown']) this.cameraPitchInput += 1;
 
     // Aim from mouse world position.
     state.aim.x = this.aimWorld.x;

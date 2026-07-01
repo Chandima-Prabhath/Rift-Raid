@@ -143,7 +143,7 @@ export class HUD {
     `;
     this.controls.innerHTML = [
       '<b style="color:rgba(255,255,255,0.65)">WASD</b> move · <b style="color:rgba(255,255,255,0.65)">L-Click</b> attack · <b style="color:rgba(255,255,255,0.65)">Q</b> ability · <b style="color:rgba(255,255,255,0.65)">Space</b> dash',
-      '<b style="color:rgba(255,255,255,0.65)">E</b> interact · <b style="color:rgba(255,255,255,0.65)">B</b> build · <b style="color:rgba(255,255,255,0.65)">R</b> rotate · <b style="color:rgba(255,255,255,0.65)">R-Click</b> camera · <b style="color:rgba(255,255,255,0.65)">Wheel</b> zoom',
+      '<b style="color:rgba(255,255,255,0.65)">E</b> interact · <b style="color:rgba(255,255,255,0.65)">B</b> build · <b style="color:rgba(255,255,255,0.65)">R</b> rotate · <b style="color:rgba(255,255,255,0.65)">Arrows</b> camera · <b style="color:rgba(255,255,255,0.65)">Wheel</b> zoom',
     ].join('<br>');
     this.container.appendChild(this.controls);
     this.controlsTimer = 10;
