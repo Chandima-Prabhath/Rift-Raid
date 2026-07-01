@@ -40,6 +40,7 @@ import {
   NameTag,
   DebugOverlay,
   Palette,
+  SoundSystem,
 } from '@rift-and-raid/engine';
 import { loadAllContent } from '@rift-and-raid/game';
 import {
@@ -144,13 +145,23 @@ async function main() {
   inputManager.addAdapter(virtualJoystick);
   inputManager.attach();
 
-  // ── 8. UI overlays ─────────────────────────────────────────────────────
+  // ── 8. UI overlays + Sound ─────────────────────────────────────────────
   const hud = new HUD();
   const deathOverlay = new DeathOverlay();
   const killFeed = new KillFeed();
   const debugOverlay = new DebugOverlay();
   const minimap = new Minimap();
   const interactPrompt = new InteractPrompt();
+  const sound = new SoundSystem();
+
+  // Unlock audio on first user interaction (browser requirement).
+  const unlockAudio = () => {
+    sound.unlock();
+    window.removeEventListener('click', unlockAudio);
+    window.removeEventListener('keydown', unlockAudio);
+  };
+  window.addEventListener('click', unlockAudio);
+  window.addEventListener('keydown', unlockAudio);
   let chatUI: ChatUI | null = null;
 
   // ── 9. Visual tracking ─────────────────────────────────────────────────
@@ -366,7 +377,19 @@ async function main() {
         }
       },
       onChat: (payload) => chatUI?.addMessage(payload),
-      onKill: (victimName, killerName) => killFeed.addKill(victimName, killerName),
+      onKill: (victimName, killerName) => {
+        killFeed.addKill(victimName, killerName);
+        sound.play('death');
+      },
+      onSound: (payload) => {
+        // Play spatialized sound — volume falls off with distance from local player.
+        const localPlayer = network.getLocalPlayerState();
+        if (localPlayer) {
+          sound.play3D(payload.type as any, payload.x, payload.y, payload.z, localPlayer.x, localPlayer.z);
+        } else {
+          sound.play(payload.type as any, 0.5);
+        }
+      },
       onConnectionStateChange: (state) => {
         console.log(`[Client] Network: ${state}`);
         if (state === 'error' && boot) {
@@ -380,6 +403,7 @@ async function main() {
     },
     {
       name: loginOpts.name,
+      faction: loginOpts.faction,
       characterClass: loginOpts.characterClass,
       characterModel: loginOpts.characterModel,
     },

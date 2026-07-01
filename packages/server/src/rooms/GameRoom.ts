@@ -50,7 +50,12 @@ interface ModelSwapInput { characterModel: string; }
 interface HarvestInput { nodeId: string; }
 interface DepositInput { }
 interface BuildInput { structureType: StructureTypeId; x: number; z: number; rotation: number; }
-interface JoinOptions { name?: string; characterModel?: string; characterClass?: CharacterClass; }
+interface JoinOptions {
+  name?: string;
+  characterModel?: string;
+  characterClass?: CharacterClass;
+  faction?: Faction;
+}
 
 // ============================================================================
 // Constants
@@ -214,7 +219,11 @@ export class GameRoom extends Room<GameState> {
   onJoin(client: Client, options?: JoinOptions): void {
     console.log(`[GameRoom] ${client.sessionId} joined`);
     const playerCount = this.state.players.size;
-    const faction: Faction = playerCount % 2 === 0 ? 'solari' : 'lunari';
+
+    // Faction: use the player's choice if provided, else auto-assign.
+    const faction: Faction = options?.faction === 'solari' || options?.faction === 'lunari'
+      ? options.faction
+      : (playerCount % 2 === 0 ? 'solari' : 'lunari');
     const spawn = SPAWN_POSITIONS[faction];
 
     const name = (options?.name && options.name.length > 0 && options.name.length <= 20)
@@ -268,6 +277,12 @@ export class GameRoom extends Room<GameState> {
     const cd = this.getWeaponCooldown(player.characterClass);
     if (now - player.lastAttackAt < cd) return;
     player.lastAttackAt = now;
+
+    // Broadcast attack sound to all clients.
+    this.broadcast('sound', {
+      type: player.characterClass === 'warrior' ? 'attack_melee' : 'attack_ranged',
+      x: player.x, y: 1, z: player.z,
+    });
 
     if (player.characterClass === 'warrior') {
       this.performMeleeAttack(player, input);
@@ -423,11 +438,15 @@ export class GameRoom extends Room<GameState> {
   private applyDamage(target: PlayerState, damage: number, attacker: PlayerState): void {
     if (!target.alive) return;
     target.hp = Math.max(0, target.hp - damage);
+    // Broadcast hit sound.
+    this.broadcast('sound', { type: 'hit', x: target.x, y: 1, z: target.z });
     if (target.hp <= 0) {
       target.alive = false;
       target.diedAt = Date.now();
       console.log(`[GameRoom] ${target.name} killed by ${attacker.name}`);
       this.broadcast('kill', { victimName: target.name, killerName: attacker.name, timestamp: Date.now() });
+      // Broadcast death sound.
+      this.broadcast('sound', { type: 'death', x: target.x, y: 1, z: target.z });
     }
   }
 
@@ -470,6 +489,9 @@ export class GameRoom extends Room<GameState> {
 
     // Apply damage to node.
     node.hp = Math.max(0, node.hp - HARVESTING.damagePerHit);
+
+    // Broadcast harvest sound.
+    this.broadcast('sound', { type: 'harvest', x: node.x, y: 1, z: node.z });
 
     // Add resources to player inventory (respect cap).
     const cap = PLAYER_DEFAULTS.maxInventoryPerResource;
@@ -518,6 +540,8 @@ export class GameRoom extends Room<GameState> {
     vault.emberwood += player.invEmberwood;
     vault.godshard += player.invGodshard;
     console.log(`[GameRoom] ${player.name} deposited ${player.invIron} iron, ${player.invEmberwood} emberwood, ${player.invGodshard} godshard`);
+    // Broadcast deposit sound.
+    this.broadcast('sound', { type: 'deposit', x: player.x, y: 1, z: player.z });
     player.invIron = 0;
     player.invEmberwood = 0;
     player.invGodshard = 0;
@@ -582,6 +606,8 @@ export class GameRoom extends Room<GameState> {
 
     this.state.structures.set(struct.id, struct);
     console.log(`[GameRoom] ${player.name} placed ${input.structureType} at (${input.x.toFixed(1)}, ${input.z.toFixed(1)})`);
+    // Broadcast build sound.
+    this.broadcast('sound', { type: 'build', x: input.x, y: 1, z: input.z });
   }
 
   private handleConstruction(dt: number): void {

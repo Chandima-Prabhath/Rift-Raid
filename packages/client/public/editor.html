@@ -1,0 +1,399 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Rift & Raid — Map Editor</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #1a1a2e; color: #eee; font-family: -apple-system, sans-serif; overflow: hidden; }
+    #toolbar { position: fixed; top: 0; left: 0; right: 0; height: 50px; background: rgba(0,0,0,0.8); display: flex; align-items: center; gap: 12px; padding: 0 16px; z-index: 10; border-bottom: 1px solid rgba(255,255,255,0.1); }
+    #toolbar button { padding: 8px 14px; background: rgba(74,144,226,0.2); border: 1px solid #4a90e2; color: #4a90e2; border-radius: 4px; cursor: pointer; font-family: inherit; font-size: 13px; }
+    #toolbar button:hover { background: rgba(74,144,226,0.4); }
+    #toolbar button.active { background: #4a90e2; color: white; }
+    #toolbar .sep { width: 1px; height: 24px; background: rgba(255,255,255,0.1); }
+    #toolbar label { font-size: 12px; color: #889; }
+    #sidebar { position: fixed; top: 50px; right: 0; width: 280px; bottom: 0; background: rgba(0,0,0,0.7); padding: 16px; overflow-y: auto; z-index: 5; border-left: 1px solid rgba(255,255,255,0.1); }
+    #sidebar h3 { font-size: 13px; color: #4a90e2; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.1em; }
+    #sidebar .prop { margin-bottom: 12px; }
+    #sidebar .prop label { display: block; font-size: 11px; color: #889; margin-bottom: 4px; }
+    #sidebar .prop input, #sidebar .prop select { width: 100%; padding: 6px 8px; background: rgba(0,0,0,0.5); border: 1px solid rgba(255,255,255,0.15); border-radius: 4px; color: white; font-family: inherit; font-size: 13px; }
+    #info { position: fixed; bottom: 8px; left: 8px; font-size: 11px; color: #889; font-family: monospace; z-index: 5; background: rgba(0,0,0,0.6); padding: 6px 10px; border-radius: 4px; }
+    canvas { display: block; cursor: crosshair; }
+    .hidden { display: none; }
+  </style>
+</head>
+<body>
+  <div id="toolbar">
+    <button id="btn-select" class="active">Select</button>
+    <button id="btn-iron">+ Iron</button>
+    <button id="btn-emberwood">+ Wood</button>
+    <button id="btn-godshard">+ Godshard</button>
+    <button id="btn-structure">+ Structure</button>
+    <button id="btn-spawn">+ Spawn</button>
+    <div class="sep"></div>
+    <button id="btn-delete">Delete</button>
+    <div class="sep"></div>
+    <button id="btn-save">Save JSON</button>
+    <button id="btn-load">Load JSON</button>
+    <button id="btn-export">Export to Server</button>
+    <div class="sep"></div>
+    <label>Grid: <input type="checkbox" id="toggle-grid" checked></label>
+  </div>
+
+  <div id="sidebar">
+    <h3>Properties</h3>
+    <div id="props">
+      <p style="color:#666;font-size:12px;">Select an object to edit its properties.</p>
+    </div>
+    <h3 style="margin-top:20px;">Map Info</h3>
+    <div id="map-info" style="font-size:12px;color:#889;line-height:1.6;"></div>
+  </div>
+
+  <div id="info">Click to place · Drag to move · Right-click to delete · Scroll to zoom</div>
+
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+      "three/examples/jsm/loaders/GLTFLoader.js": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/loaders/GLTFLoader.js"
+    }
+  }
+  </script>
+  <script type="module">
+    import * as THREE from 'three';
+
+    // ── Map data ──
+    const mapData = {
+      worldSize: { width: 200, depth: 120 },
+      resourceNodes: [],
+      structures: [],
+      spawnPoints: [
+        { faction: 'solari', x: -80, y: 0, z: -40 },
+        { faction: 'lunari', x: 80, y: 0, z: -40 },
+      ],
+    };
+
+    let selectedObj = null;
+    let currentTool = 'select';
+
+    // ── Three.js setup ──
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x2a3a4a);
+    scene.fog = new THREE.Fog(0x2a3a4a, 80, 200);
+
+    const camera = new THREE.PerspectiveCamera(50, (window.innerWidth - 280) / (window.innerHeight - 50), 0.1, 500);
+    camera.position.set(0, 80, 80);
+    camera.lookAt(0, 0, -40);
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(window.innerWidth - 280, window.innerHeight - 50);
+    renderer.shadowMap.enabled = true;
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+    document.body.appendChild(renderer.domElement);
+
+    // Lights
+    scene.add(new THREE.HemisphereLight(0xffffff, 0x443322, 0.8));
+    const dirLight = new THREE.DirectionalLight(0xffffff, 1.2);
+    dirLight.position.set(40, 60, 20);
+    dirLight.castShadow = true;
+    dirLight.shadow.mapSize.set(2048, 2048);
+    dirLight.shadow.camera.left = -100;
+    dirLight.shadow.camera.right = 100;
+    dirLight.shadow.camera.top = 50;
+    dirLight.shadow.camera.bottom = -100;
+    scene.add(dirLight);
+
+    // Ground
+    const ground = new THREE.Mesh(
+      new THREE.PlaneGeometry(mapData.worldSize.width, mapData.worldSize.depth),
+      new THREE.MeshStandardMaterial({ color: 0x3a5a3a })
+    );
+    ground.rotation.x = -Math.PI / 2;
+    ground.position.z = -mapData.worldSize.depth / 2;
+    ground.receiveShadow = true;
+    scene.add(ground);
+
+    // Grid
+    const grid = new THREE.GridHelper(Math.max(mapData.worldSize.width, mapData.worldSize.depth), 40, 0x556677, 0x334455);
+    grid.position.z = -mapData.worldSize.depth / 2;
+    grid.position.y = 0.01;
+    scene.add(grid);
+
+    // Base markers
+    for (const spawn of mapData.spawnPoints) {
+      const color = spawn.faction === 'solari' ? 0xe07b3a : 0x4a90e2;
+      const marker = new THREE.Mesh(
+        new THREE.CylinderGeometry(4, 4, 0.5, 16),
+        new THREE.MeshStandardMaterial({ color, transparent: true, opacity: 0.6 })
+      );
+      marker.position.set(spawn.x, 0.25, spawn.z);
+      marker.userData = { type: 'spawn', data: spawn };
+      scene.add(marker);
+    }
+
+    // ── Object management ──
+    const objects = []; // { mesh, data, type }
+
+    function createNode(type, x, z) {
+      const colors = { iron: 0x808890, emberwood: 0x6a4a2a, godshard: 0xb080ff };
+      const mesh = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.6, 0.8, 1.5, 8),
+        new THREE.MeshStandardMaterial({ color: colors[type] })
+      );
+      mesh.position.set(x, 0.75, z);
+      mesh.castShadow = true;
+      const data = { id: `node_${Date.now()}`, type, x, y: 0, z, hp: 50, maxHp: 50 };
+      mesh.userData = { type: 'node', data };
+      scene.add(mesh);
+      objects.push(mesh);
+      mapData.resourceNodes.push(data);
+      return mesh;
+    }
+
+    function createStructure(x, z) {
+      const mesh = new THREE.Mesh(
+        new THREE.BoxGeometry(2, 2, 0.5),
+        new THREE.MeshStandardMaterial({ color: 0x8a7a6a })
+      );
+      mesh.position.set(x, 1, z);
+      mesh.castShadow = true;
+      const data = { id: `struct_${Date.now()}`, type: 'wall_stone', x, y: 0, z, rotation: 0 };
+      mesh.userData = { type: 'structure', data };
+      scene.add(mesh);
+      objects.push(mesh);
+      mapData.structures.push(data);
+      return mesh;
+    }
+
+    // ── Interaction ──
+    const raycaster = new THREE.Raycaster();
+    const mouse = new THREE.Vector2();
+    let isDragging = false;
+    let dragOffset = new THREE.Vector3();
+
+    function getGroundPoint(event) {
+      const rect = renderer.domElement.getBoundingClientRect();
+      mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+      mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+      raycaster.setFromCamera(mouse, camera);
+      const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+      const point = new THREE.Vector3();
+      raycaster.ray.intersectPlane(plane, point);
+      return point;
+    }
+
+    function getObjectAtMouse(event) {
+      const rect = renderer.domElement.getBoundingClientRect();
+      mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+      mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+      raycaster.setFromCamera(mouse, camera);
+      const meshes = objects.concat(scene.children.filter(c => c.userData?.type === 'spawn'));
+      const intersects = raycaster.intersectObjects(meshes);
+      return intersects.length > 0 ? intersects[0].object : null;
+    }
+
+    renderer.domElement.addEventListener('mousedown', (e) => {
+      const point = getGroundPoint(e);
+
+      if (e.button === 2) {
+        // Right-click: delete
+        const obj = getObjectAtMouse(e);
+        if (obj && obj.userData?.data) {
+          const data = obj.userData.data;
+          if (obj.userData.type === 'node') {
+            mapData.resourceNodes = mapData.resourceNodes.filter(n => n.id !== data.id);
+          } else if (obj.userData.type === 'structure') {
+            mapData.structures = mapData.structures.filter(s => s.id !== data.id);
+          }
+          scene.remove(obj);
+          objects.splice(objects.indexOf(obj), 1);
+          if (selectedObj === obj) { selectedObj = null; updateProps(); }
+        }
+        return;
+      }
+
+      if (currentTool === 'select') {
+        const obj = getObjectAtMouse(e);
+        if (obj) {
+          selectedObj = obj;
+          isDragging = true;
+          const objPos = obj.position;
+          dragOffset.copy(objPos).sub(point);
+          dragOffset.y = 0;
+        } else {
+          selectedObj = null;
+        }
+        updateProps();
+      } else if (currentTool === 'iron') {
+        selectedObj = createNode('iron', point.x, point.z);
+        updateProps();
+      } else if (currentTool === 'emberwood') {
+        selectedObj = createNode('emberwood', point.x, point.z);
+        updateProps();
+      } else if (currentTool === 'godshard') {
+        selectedObj = createNode('godshard', point.x, point.z);
+        updateProps();
+      } else if (currentTool === 'structure') {
+        selectedObj = createStructure(point.x, point.z);
+        updateProps();
+      }
+    });
+
+    renderer.domElement.addEventListener('mousemove', (e) => {
+      if (isDragging && selectedObj) {
+        const point = getGroundPoint(e);
+        selectedObj.position.x = point.x + dragOffset.x;
+        selectedObj.position.z = point.z + dragOffset.z;
+        const data = selectedObj.userData.data;
+        data.x = selectedObj.position.x;
+        data.z = selectedObj.position.z;
+        updateProps();
+      }
+    });
+
+    renderer.domElement.addEventListener('mouseup', () => { isDragging = false; });
+    renderer.domElement.addEventListener('contextmenu', (e) => e.preventDefault());
+
+    // Zoom
+    renderer.domElement.addEventListener('wheel', (e) => {
+      e.preventDefault();
+      const delta = e.deltaY * 0.05;
+      camera.position.y = Math.max(20, Math.min(150, camera.position.y + delta));
+      camera.position.z = Math.max(20, Math.min(150, camera.position.z + delta));
+      camera.lookAt(0, 0, -40);
+    });
+
+    // ── Tool buttons ──
+    const tools = ['select', 'iron', 'emberwood', 'godshard', 'structure', 'spawn'];
+    const toolButtons = {
+      select: document.getElementById('btn-select'),
+      iron: document.getElementById('btn-iron'),
+      emberwood: document.getElementById('btn-emberwood'),
+      godshard: document.getElementById('btn-godshard'),
+      structure: document.getElementById('btn-structure'),
+      spawn: document.getElementById('btn-spawn'),
+    };
+    for (const t of tools) {
+      toolButtons[t].onclick = () => {
+        currentTool = t;
+        for (const tt of tools) {
+          toolButtons[tt].classList.toggle('active', tt === t);
+        }
+      };
+    }
+
+    // ── Properties panel ──
+    function updateProps() {
+      const propsEl = document.getElementById('props');
+      if (!selectedObj || !selectedObj.userData?.data) {
+        propsEl.innerHTML = '<p style="color:#666;font-size:12px;">Select an object to edit its properties.</p>';
+        updateMapInfo();
+        return;
+      }
+      const data = selectedObj.userData.data;
+      const type = selectedObj.userData.type;
+      let html = `<div class="prop"><label>Type</label><input type="text" value="${type}" disabled></div>`;
+      html += `<div class="prop"><label>X</label><input type="number" value="${data.x.toFixed(1)}" id="prop-x"></div>`;
+      html += `<div class="prop"><label>Z</label><input type="number" value="${data.z.toFixed(1)}" id="prop-z"></div>`;
+      if (type === 'structure') {
+        html += `<div class="prop"><label>Rotation</label><input type="number" value="${(data.rotation * 180 / Math.PI).toFixed(0)}" id="prop-rot"></div>`;
+        html += `<div class="prop"><label>Structure Type</label><select id="prop-type">
+          <option value="wall_stone" ${data.type === 'wall_stone' ? 'selected' : ''}>Stone Wall</option>
+          <option value="wall_wood" ${data.type === 'wall_wood' ? 'selected' : ''}>Wood Wall</option>
+          <option value="tower" ${data.type === 'tower' ? 'selected' : ''}>Tower</option>
+          <option value="barricade" ${data.type === 'barricade' ? 'selected' : ''}>Barricade</option>
+        </select></div>`;
+      }
+      propsEl.innerHTML = html;
+
+      const xInput = document.getElementById('prop-x');
+      const zInput = document.getElementById('prop-z');
+      if (xInput) xInput.oninput = () => { data.x = parseFloat(xInput.value); selectedObj.position.x = data.x; };
+      if (zInput) zInput.oninput = () => { data.z = parseFloat(zInput.value); selectedObj.position.z = data.z; };
+      const rotInput = document.getElementById('prop-rot');
+      if (rotInput) rotInput.oninput = () => { data.rotation = parseFloat(rotInput.value) * Math.PI / 180; selectedObj.rotation.y = data.rotation; };
+      const typeInput = document.getElementById('prop-type');
+      if (typeInput) typeInput.onchange = () => { data.type = typeInput.value; };
+
+      updateMapInfo();
+    }
+
+    function updateMapInfo() {
+      document.getElementById('map-info').innerHTML = `
+        Resource Nodes: ${mapData.resourceNodes.length}<br>
+        Structures: ${mapData.structures.length}<br>
+        Spawn Points: ${mapData.spawnPoints.length}<br>
+        World: ${mapData.worldSize.width}×${mapData.worldSize.depth}
+      `;
+    }
+
+    // ── Save/Load ──
+    document.getElementById('btn-save').onclick = () => {
+      const blob = new Blob([JSON.stringify(mapData, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'map.json';
+      a.click();
+      URL.revokeObjectURL(url);
+    };
+
+    document.getElementById('btn-load').onclick = () => {
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.accept = '.json';
+      input.onchange = (e) => {
+        const file = e.target.files[0];
+        const reader = new FileReader();
+        reader.onload = () => {
+          const loaded = JSON.parse(reader.result);
+          Object.assign(mapData, loaded);
+          // Clear existing objects
+          for (const obj of objects) scene.remove(obj);
+          objects.length = 0;
+          // Recreate from loaded data
+          for (const node of mapData.resourceNodes) {
+            const mesh = createNode(node.type, node.x, node.z);
+            mesh.userData.data = node;
+          }
+          for (const struct of mapData.structures) {
+            const mesh = createStructure(struct.x, struct.z);
+            mesh.userData.data = struct;
+            mesh.rotation.y = struct.rotation || 0;
+          }
+          updateProps();
+          alert('Map loaded!');
+        };
+        reader.readAsText(file);
+      };
+      input.click();
+    };
+
+    document.getElementById('btn-export').onclick = () => {
+      // Save to localStorage so the server can read it (via a fetch endpoint)
+      localStorage.setItem('rr_map', JSON.stringify(mapData));
+      alert('Map saved to localStorage. Copy the JSON and place it at packages/game/src/content/map.json');
+      console.log('Map JSON:', JSON.stringify(mapData, null, 2));
+    };
+
+    document.getElementById('toggle-grid').onchange = (e) => {
+      grid.visible = e.target.checked;
+    };
+
+    // ── Render loop ──
+    function animate() {
+      requestAnimationFrame(animate);
+      renderer.render(scene, camera);
+    }
+    animate();
+
+    window.addEventListener('resize', () => {
+      camera.aspect = (window.innerWidth - 280) / (window.innerHeight - 50);
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth - 280, window.innerHeight - 50);
+    });
+
+    updateMapInfo();
+  </script>
+</body>
+</html>

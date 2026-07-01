@@ -12,3 +12,4 @@ export * from './assets/index.js';
 export * from './input/index.js';
 export * from './network/index.js';
 export * from './ui/index.js';
+export * from './audio/index.js';

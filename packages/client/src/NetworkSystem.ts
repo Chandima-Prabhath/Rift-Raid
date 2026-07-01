@@ -77,6 +77,8 @@ export interface NetworkSystemCallbacks {
   onChat: (payload: { playerId: string; name: string; text: string; timestamp: number }) => void;
   /** A player was killed. */
   onKill: (victimName: string, killerName: string) => void;
+  /** Sound effect triggered by server (networked audio). */
+  onSound: (payload: { type: string; x: number; y: number; z: number }) => void;
   /** Connection state changed. */
   onConnectionStateChange: (state: string) => void;
 }
@@ -90,7 +92,7 @@ export class NetworkSystem {
   private room: Room<GameState> | null = null;
   private world: World;
   private serverUrl: string;
-  private joinOptions: { name?: string; characterModel?: string; characterClass?: CharacterClass };
+  private joinOptions: { name?: string; characterModel?: string; characterClass?: CharacterClass; faction?: 'solari' | 'lunari' };
   private callbacks: NetworkSystemCallbacks;
   private getInput: () => InputState;
   private getCameraYaw: () => number;
@@ -112,7 +114,7 @@ export class NetworkSystem {
     serverUrl: string,
     getInput: () => InputState,
     callbacks: NetworkSystemCallbacks,
-    joinOptions: { name?: string; characterModel?: string; characterClass?: CharacterClass } = {},
+    joinOptions: { name?: string; characterModel?: string; characterClass?: CharacterClass; faction?: 'solari' | 'lunari' } = {},
     getCameraYaw: () => number = () => 0,
   ) {
     this.world = world;
@@ -402,6 +404,10 @@ export class NetworkSystem {
 
     this.room.onMessage('pong', (payload: { seq: number; t: number }) => {
       this.ping = Date.now() - payload.t;
+    });
+
+    this.room.onMessage('sound', (payload: { type: string; x: number; y: number; z: number }) => {
+      this.callbacks.onSound(payload);
     });
   }
 
