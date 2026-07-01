@@ -239,8 +239,9 @@ export const BUILDING = {
   depositRange: 6.0,
   /** Max structures per faction. */
   maxStructuresPerFaction: 30,
-  /** Min distance between structures (meters). */
-  minStructureSpacing: 2.0,
+  /** Min distance between structures (meters). Set to 0.9 so 1m grid
+   *  snapping allows walls to be placed adjacent to each other. */
+  minStructureSpacing: 0.9,
   /** Max distance from nexus to place a structure (meters). */
   maxBuildRadius: 50,
 } as const;

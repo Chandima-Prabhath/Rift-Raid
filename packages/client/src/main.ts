@@ -78,8 +78,12 @@ import { InteractPrompt } from './InteractPrompt.js';
 // ============================================================================
 
 const boot = document.getElementById('boot');
+// Auto-detect server URL from the browser's hostname.
+// When playing on another device (LAN), the client's window.location.hostname
+// is the host machine's IP/hostname. We use that + port 2567 for the server.
+// Override with ?server=ws://custom-host:2567 if needed.
 const SERVER_URL = new URLSearchParams(window.location.search).get('server')
-  ?? 'ws://redacted-mt.local:2567';
+  ?? `ws://${window.location.hostname}:2567`;
 
 interface PlayerVisual {
   mesh: THREE.Group;
@@ -104,10 +108,13 @@ const STRUCTURE_MODEL_URLS: Record<string, string> = {
 };
 
 /**
- * Load a structure GLB model, recenter it on origin (X/Z), lift so feet
- * are at y=0, apply rotation, and position at (x, 0, z).
- * Does NOT scale — Kenney models are designed at their natural size.
- * Returns the positioned model.
+ * Load a structure GLB model, scale Y to ~2m tall (keeping X/Z natural),
+ * recenter it on origin (X/Z), lift so feet are at y=0, apply rotation,
+ * and position at (x, 0, z).
+ *
+ * We scale ONLY the Y axis — Kenney wall models are thin planes (0.1m thick,
+ * 1m deep) and scaling uniformly would make them fat blocks. Scaling Y only
+ * makes them taller without distorting their width/depth.
  */
 async function loadStructureModel(
   assetLoader: AssetLoader,
@@ -119,16 +126,24 @@ async function loadStructureModel(
   const url = STRUCTURE_MODEL_URLS[structureType] ?? '/structures/wall.glb';
   const model = await assetLoader.loadGLTF(url);
 
-  // Compute the model's bounding box in its natural (unscaled) state.
+  // Scale Y only to target height (2m). Keep X/Z at natural size.
+  const TARGET_HEIGHT = 2.0;
   const box = new THREE.Box3().setFromObject(model);
-  const centerX = (box.min.x + box.max.x) / 2;
-  const centerZ = (box.min.z + box.max.z) / 2;
+  const naturalHeight = box.max.y - box.min.y;
+  if (naturalHeight > 0.001) {
+    model.scale.y = TARGET_HEIGHT / naturalHeight;
+  }
+
+  // Recompute box after Y scaling to get correct center/offset.
+  const box2 = new THREE.Box3().setFromObject(model);
+  const centerX = (box2.min.x + box2.max.x) / 2;
+  const centerZ = (box2.min.z + box2.max.z) / 2;
 
   // Recenter: offset the model so its center aligns with (x, z).
-  // Also lift so the bottom (box.min.y) is at y=0.
+  // Also lift so the bottom (box2.min.y) is at y=0.
   model.position.x = x - centerX;
   model.position.z = z - centerZ;
-  model.position.y = -box.min.y;
+  model.position.y = -box2.min.y;
   model.rotation.y = rotation;
 
   // Clone materials + set DoubleSide (fixes see-through walls).
@@ -287,7 +302,7 @@ async function main() {
         buildMode = { type: structureType, ghost };
         ghostRotation = 0;
 
-        // Async-load the real model using the shared helper (NO scaling).
+        // Async-load the real model using the shared helper.
         loadStructureModel(assetLoader, structureType, 0, 0, 0).then((model) => {
           if (buildMode.ghost !== ghost) return;
 
@@ -305,11 +320,15 @@ async function main() {
             }
           });
 
-          // The model is already centered at (0,0,0) by loadStructureModel.
-          // Copy the ghost's current position (mouse point) to the model.
-          model.position.x += ghost.position.x;
-          model.position.z += ghost.position.z;
-          model.rotation.y = ghostRotation;
+          // Wrap the model in a group. The wrapper's position = mouse point
+          // (set by updateAimAndBuildGhost). The model inside has its
+          // centering offset (position = -centerX, -centerZ) from
+          // loadStructureModel. This way the model appears centered at the
+          // mouse point, and updateAimAndBuildGhost can set wrapper.position
+          // without losing the centering offset.
+          const wrapper = new THREE.Group();
+          wrapper.position.copy(ghost.position);
+          wrapper.add(model);
 
           // Clean up old ghost box.
           sceneManager.scene.remove(ghost);
@@ -318,8 +337,9 @@ async function main() {
             oldBox.geometry.dispose();
             (oldBox.material as THREE.Material).dispose();
           }
-          sceneManager.scene.add(model);
-          buildMode = { type: structureType, ghost: model };
+          sceneManager.scene.add(wrapper);
+          buildMode = { type: structureType, ghost: wrapper };
+          wrapper.rotation.y = ghostRotation;
         }).catch(() => {
           // Keep the box ghost if model fails to load.
         });
@@ -564,6 +584,12 @@ async function main() {
     return null;
   }
 
+  /** Grid snapping for building — snaps to 1m grid so walls align easily. */
+  const GRID_SIZE = 1.0;
+  function snapToGrid(v: number): number {
+    return Math.round(v / GRID_SIZE) * GRID_SIZE;
+  }
+
   function updateAimAndBuildGhost() {
     const point = getGroundPoint();
     if (point) {
@@ -573,12 +599,10 @@ async function main() {
         const t = world.getComponent(localEntity, TransformComponent);
         if (t) virtualJoystick.setAimWorld(t.x, t.z);
       }
-      // Update build ghost position — snap to ground point.
-      // The ghost model is already centered (X/Z) and lifted (Y) on load,
-      // so we just set X/Z to the click point.
+      // Update build ghost position — snap to grid for easy wall placement.
       if (buildMode.ghost) {
-        buildMode.ghost.position.x = point.x;
-        buildMode.ghost.position.z = point.z;
+        buildMode.ghost.position.x = snapToGrid(point.x);
+        buildMode.ghost.position.z = snapToGrid(point.z);
       }
     }
   }
@@ -589,7 +613,8 @@ async function main() {
     if (!buildMode.type) return;
     const point = getGroundPoint();
     if (point) {
-      network.sendBuild(buildMode.type, point.x, point.z, ghostRotation);
+      // Snap placement to grid (matches ghost preview snapping).
+      network.sendBuild(buildMode.type, snapToGrid(point.x), snapToGrid(point.z), ghostRotation);
     }
   });
 
