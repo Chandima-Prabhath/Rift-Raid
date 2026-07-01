@@ -224,8 +224,11 @@ async function main() {
           if (size.y > 0.001) {
             model.scale.setScalar(targetHeight / size.y);
           }
-          // Position so bottom is at y=0 (same as actual structure placement).
+          // Recompute box after scaling. Recenter X/Z so the model's
+          // center aligns with the ghost's position (same as actual placement).
           const box2 = new THREE.Box3().setFromObject(model);
+          model.position.x = -(box2.min.x + box2.max.x) / 2;
+          model.position.z = -(box2.min.z + box2.max.z) / 2;
           model.position.y = -box2.min.y;
 
           // Make it semi-transparent for ghost preview.
@@ -501,7 +504,9 @@ async function main() {
         const t = world.getComponent(localEntity, TransformComponent);
         if (t) virtualJoystick.setAimWorld(t.x, t.z);
       }
-      // Update build ghost position.
+      // Update build ghost position — snap to ground point.
+      // The ghost model is already centered (X/Z) and lifted (Y) on load,
+      // so we just set X/Z to the click point.
       if (buildMode.ghost) {
         buildMode.ghost.position.x = point.x;
         buildMode.ghost.position.z = point.z;
@@ -845,6 +850,26 @@ async function main() {
           continue;
         }
         sys.update(world, dt);
+      }
+
+      // Auto-camera follow: if the local player is moving, set the target
+      // yaw to the movement direction so the camera smoothly rotates behind.
+      const input = inputManager.getState();
+      const moveMag = Math.hypot(input.move.x, input.move.y);
+      if (moveMag > 0.1) {
+        // Direction the player is moving (world-space, after camera-relative conversion).
+        // We use the same formula as MovementSystem: atan2(worldMoveX, worldMoveZ).
+        const camYaw = cameraController.yaw;
+        const cosY = Math.cos(-camYaw);
+        const sinY = Math.sin(-camYaw);
+        const worldMoveX = input.move.x * cosY + input.move.y * sinY;
+        const worldMoveZ = -input.move.x * sinY + input.move.y * cosY;
+        const moveAngle = Math.atan2(worldMoveX, worldMoveZ);
+        // Camera should be BEHIND the player, so target yaw = moveAngle + π.
+        cameraController.setAutoFollowYaw(moveAngle + Math.PI);
+      } else {
+        // Player idle — don't auto-rotate.
+        cameraController.setAutoFollowYaw(null);
       }
 
       network.update(dt);

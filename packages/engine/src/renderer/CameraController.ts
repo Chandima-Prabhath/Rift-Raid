@@ -26,6 +26,15 @@ export class CameraController {
     this.sceneManager.setFollowTarget(entity);
   }
 
+  /**
+   * Set the target yaw for auto-follow. Pass the player's movement direction
+   * (in radians) so the camera smoothly rotates to stay behind them.
+   * Pass null when the player is idle.
+   */
+  setAutoFollowYaw(yaw: number | null): void {
+    this.sceneManager.setAutoFollowYaw(yaw);
+  }
+
   /** Current camera yaw in radians (for camera-relative movement). */
   get yaw(): number {
     return this.sceneManager.cameraYaw;

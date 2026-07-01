@@ -49,6 +49,11 @@ export class SceneManager {
   private pinchStartDist = 0;
   private pinchStartDistance = 0;
 
+  // Auto-follow: the camera gradually rotates to stay behind the player
+  // when they move. The game sets targetAutoYaw based on movement direction.
+  private autoFollowEnabled = true;
+  private targetAutoYaw: number | null = null;
+
   constructor(opts: SceneManagerOptions = {}) {
     this.renderer = new THREE.WebGLRenderer({
       canvas: opts.canvas,
@@ -219,6 +224,20 @@ export class SceneManager {
     return Math.max(min, Math.min(max, p));
   }
 
+  /**
+   * Set the target yaw for auto-follow. When the player moves, pass the
+   * movement direction here and the camera will smoothly rotate to stay
+   * behind the player. Pass null to disable auto-follow (e.g., when idle).
+   */
+  setAutoFollowYaw(yaw: number | null): void {
+    this.targetAutoYaw = yaw;
+  }
+
+  /** Enable/disable auto-follow entirely. */
+  setAutoFollowEnabled(enabled: boolean): void {
+    this.autoFollowEnabled = enabled;
+  }
+
   /** Current camera yaw (for camera-relative movement). */
   get cameraYaw(): number {
     return this.yaw;
@@ -278,16 +297,24 @@ export class SceneManager {
     // Smooth follow.
     this.followPosition.lerp(obj.position, CAMERA_CONFIG.followLerp);
 
+    // Auto-follow: smoothly rotate yaw toward targetAutoYaw when set.
+    // This makes the camera stay behind the player as they move.
+    // Skip if the user is manually dragging.
+    if (this.autoFollowEnabled && this.targetAutoYaw !== null && !this.isDragging) {
+      // Find shortest angular path (handle wraparound at ±π).
+      let diff = this.targetAutoYaw - this.yaw;
+      while (diff > Math.PI) diff -= 2 * Math.PI;
+      while (diff < -Math.PI) diff += 2 * Math.PI;
+      // Slow lerp — camera takes ~1s to catch up. Lower = slower/smoother.
+      this.yaw += diff * 0.04;
+    }
+
     // Spherical → Cartesian offset.
-    // pitch=0 → camera at horizon level behind player.
-    // pitch=90° → camera straight above looking down.
     const cosPitch = Math.cos(this.pitch);
     const sinPitch = Math.sin(this.pitch);
     const cosYaw = Math.cos(this.yaw);
     const sinYaw = Math.sin(this.yaw);
 
-    // Camera is positioned behind and above the player.
-    // At yaw=0, pitch=40°: camera is at (0, dist*sin40, dist*cos40) — above and behind on +Z.
     const offsetX = -sinYaw * cosPitch * this.distance;
     const offsetY = sinPitch * this.distance;
     const offsetZ = cosYaw * cosPitch * this.distance;
