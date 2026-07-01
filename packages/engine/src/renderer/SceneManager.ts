@@ -305,8 +305,8 @@ export class SceneManager {
       let diff = this.targetAutoYaw - this.yaw;
       while (diff > Math.PI) diff -= 2 * Math.PI;
       while (diff < -Math.PI) diff += 2 * Math.PI;
-      // Slow lerp — camera takes ~1s to catch up. Lower = slower/smoother.
-      this.yaw += diff * 0.04;
+      // Slow lerp — camera takes ~2s to catch up. Gentle, not jerky.
+      this.yaw += diff * 0.02;
     }
 
     // Spherical → Cartesian offset.

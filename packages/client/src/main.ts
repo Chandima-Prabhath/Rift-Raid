@@ -188,10 +188,9 @@ async function main() {
         buildMode.ghost = null;
       }
       if (structureType) {
-        // Create a semi-transparent ghost preview. Start with a box,
-        // then async-load the real model and swap it in.
-        // Box is 2.5m tall (matches structure target height), centered at y=1.25
-        // so the bottom sits on the ground (y=0).
+        // Create a semi-transparent ghost preview using a wrapper group.
+        // The wrapper's position = mouse ground point (y=0). Inside the
+        // wrapper, the box/model is offset so its bottom sits at y=0.
         const GHOST_HEIGHT = 2.5;
         const ghostGeo = new THREE.BoxGeometry(2, GHOST_HEIGHT, 0.5);
         const ghostMat = new THREE.MeshBasicMaterial({
@@ -200,8 +199,10 @@ async function main() {
           opacity: 0.35,
           depthWrite: false,
         });
-        const ghost = new THREE.Mesh(ghostGeo, ghostMat);
-        ghost.position.y = GHOST_HEIGHT / 2; // bottom at y=0
+        const ghostBox = new THREE.Mesh(ghostGeo, ghostMat);
+        ghostBox.position.y = GHOST_HEIGHT / 2; // box bottom at wrapper's y=0
+        const ghost = new THREE.Group();
+        ghost.add(ghostBox);
         sceneManager.scene.add(ghost);
         buildMode = { type: structureType, ghost };
         ghostRotation = 0;
@@ -224,11 +225,14 @@ async function main() {
           if (size.y > 0.001) {
             model.scale.setScalar(targetHeight / size.y);
           }
-          // Recompute box after scaling. Recenter X/Z so the model's
-          // center aligns with the ghost's position (same as actual placement).
+          // Recompute box after scaling. Center the model inside a wrapper
+          // group so the wrapper's position = world position (mouse point),
+          // and the model inside is offset to center on the wrapper's origin.
           const box2 = new THREE.Box3().setFromObject(model);
-          model.position.x = -(box2.min.x + box2.max.x) / 2;
-          model.position.z = -(box2.min.z + box2.max.z) / 2;
+          const centerX = (box2.min.x + box2.max.x) / 2;
+          const centerZ = (box2.min.z + box2.max.z) / 2;
+          model.position.x = -centerX;
+          model.position.z = -centerZ;
           model.position.y = -box2.min.y;
 
           // Make it semi-transparent for ghost preview.
@@ -245,12 +249,24 @@ async function main() {
             }
           });
 
+          // Create a wrapper group. The wrapper's position = mouse ground
+          // point (set by updateAimAndBuildGhost). The model inside is
+          // centered on the wrapper's origin. This way, when the wrapper
+          // moves to point.x, the model appears centered at point.x.
+          const wrapper = new THREE.Group();
+          wrapper.position.copy(ghost.position);
+          wrapper.add(model);
+
+          // Clean up old ghost (box mesh inside the group).
           sceneManager.scene.remove(ghost);
-          ghost.geometry.dispose();
-          (ghost.material as THREE.Material).dispose();
-          sceneManager.scene.add(model);
-          buildMode = { type: structureType, ghost: model };
-          model.rotation.y = ghostRotation;
+          const oldBox = ghost.children[0] as THREE.Mesh;
+          if (oldBox) {
+            oldBox.geometry.dispose();
+            (oldBox.material as THREE.Material).dispose();
+          }
+          sceneManager.scene.add(wrapper);
+          buildMode = { type: structureType, ghost: wrapper };
+          wrapper.rotation.y = ghostRotation;
         }).catch(() => {
           // Keep the box ghost if model fails to load.
         });
@@ -666,12 +682,15 @@ async function main() {
         if (size.y > 0.001) {
           model.scale.setScalar(targetHeight / size.y);
         }
-        // Recompute box after scaling, then position so feet are at y=0
-        // (on the ground, not buried).
+        // Recompute box after scaling. Center the model on origin (X/Z)
+        // and lift so feet are at y=0. Compute center BEFORE applying
+        // rotation so the offset is correct regardless of rotation.
         const box2 = new THREE.Box3().setFromObject(model);
-        model.position.x = struct.x - (box2.min.x + box2.max.x) / 2;
-        model.position.z = struct.z - (box2.min.z + box2.max.z) / 2;
-        model.position.y = -box2.min.y; // lift so bottom is at y=0
+        const centerX = (box2.min.x + box2.max.x) / 2;
+        const centerZ = (box2.min.z + box2.max.z) / 2;
+        model.position.x = struct.x - centerX;
+        model.position.z = struct.z - centerZ;
+        model.position.y = -box2.min.y;
         model.rotation.y = struct.rotation;
 
         // Set initial opacity based on built state.
@@ -852,13 +871,13 @@ async function main() {
         sys.update(world, dt);
       }
 
-      // Auto-camera follow: if the local player is moving, set the target
-      // yaw to the movement direction so the camera smoothly rotates behind.
+      // Auto-camera follow: only auto-rotate when the player moves FORWARD
+      // (W key). For other directions, keep the camera stable so it doesn't
+      // spin disorientingly. The camera slowly aligns behind the player.
       const input = inputManager.getState();
       const moveMag = Math.hypot(input.move.x, input.move.y);
-      if (moveMag > 0.1) {
-        // Direction the player is moving (world-space, after camera-relative conversion).
-        // We use the same formula as MovementSystem: atan2(worldMoveX, worldMoveZ).
+      // Only auto-follow when moving forward (move.y < -0.3 means W is pressed).
+      if (moveMag > 0.3 && input.move.y < -0.3) {
         const camYaw = cameraController.yaw;
         const cosY = Math.cos(-camYaw);
         const sinY = Math.sin(-camYaw);
@@ -868,7 +887,7 @@ async function main() {
         // Camera should be BEHIND the player, so target yaw = moveAngle + π.
         cameraController.setAutoFollowYaw(moveAngle + Math.PI);
       } else {
-        // Player idle — don't auto-rotate.
+        // Player idle or moving sideways/back — don't auto-rotate.
         cameraController.setAutoFollowYaw(null);
       }
 
