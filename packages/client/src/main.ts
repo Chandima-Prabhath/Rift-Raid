@@ -88,6 +88,67 @@ interface PlayerVisual {
   modelLoading: boolean;
 }
 
+// ── Structure model helper ─────────────────────────────────────────────────
+// Kenney structure models have their geometry offset from the origin
+// (e.g. wall.glb has vertices at X=[0.4,0.5], not centered on X=0).
+// We DO NOT scale models — they're designed to be 1m tall, and scaling
+// uniformly distorts thin walls into fat blocks. Instead, we just
+// recenter the model so its center aligns with the placement position.
+//
+// Model URLs — structures are in /structures/, towers are in /props/
+const STRUCTURE_MODEL_URLS: Record<string, string> = {
+  wall_stone: '/structures/wall.glb',
+  wall_wood: '/structures/wall-wood.glb',
+  tower: '/props/tower-square-build-a.glb',
+  barricade: '/structures/fence.glb',
+};
+
+/**
+ * Load a structure GLB model, recenter it on origin (X/Z), lift so feet
+ * are at y=0, apply rotation, and position at (x, 0, z).
+ * Does NOT scale — Kenney models are designed at their natural size.
+ * Returns the positioned model.
+ */
+async function loadStructureModel(
+  assetLoader: AssetLoader,
+  structureType: string,
+  x: number,
+  z: number,
+  rotation: number,
+): Promise<THREE.Object3D> {
+  const url = STRUCTURE_MODEL_URLS[structureType] ?? '/structures/wall.glb';
+  const model = await assetLoader.loadGLTF(url);
+
+  // Compute the model's bounding box in its natural (unscaled) state.
+  const box = new THREE.Box3().setFromObject(model);
+  const centerX = (box.min.x + box.max.x) / 2;
+  const centerZ = (box.min.z + box.max.z) / 2;
+
+  // Recenter: offset the model so its center aligns with (x, z).
+  // Also lift so the bottom (box.min.y) is at y=0.
+  model.position.x = x - centerX;
+  model.position.z = z - centerZ;
+  model.position.y = -box.min.y;
+  model.rotation.y = rotation;
+
+  // Clone materials + set DoubleSide (fixes see-through walls).
+  model.traverse((child) => {
+    const mesh = child as THREE.Mesh;
+    if (mesh.material) {
+      const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+      const newMats = mats.map(mat => {
+        const sm = (mat as THREE.MeshStandardMaterial).clone();
+        sm.side = THREE.DoubleSide;
+        sm.needsUpdate = true;
+        return sm;
+      });
+      mesh.material = Array.isArray(mesh.material) ? newMats : newMats[0];
+    }
+  });
+
+  return model;
+}
+
 async function main() {
   // ── 1. Login screen ────────────────────────────────────────────────────
   const login = new LoginScreen();
@@ -210,11 +271,8 @@ async function main() {
         buildMode.ghost = null;
       }
       if (structureType) {
-        // Create a semi-transparent ghost preview using a wrapper group.
-        // The wrapper's position = mouse ground point (y=0). Inside the
-        // wrapper, the box/model is offset so its bottom sits at y=0.
-        const GHOST_HEIGHT = 2.5;
-        const ghostGeo = new THREE.BoxGeometry(2, GHOST_HEIGHT, 0.5);
+        // Create a simple box ghost immediately (1m tall, matching model size).
+        const ghostGeo = new THREE.BoxGeometry(1, 1, 0.1);
         const ghostMat = new THREE.MeshBasicMaterial({
           color: 0x4a90e2,
           transparent: true,
@@ -222,40 +280,16 @@ async function main() {
           depthWrite: false,
         });
         const ghostBox = new THREE.Mesh(ghostGeo, ghostMat);
-        ghostBox.position.y = GHOST_HEIGHT / 2; // box bottom at wrapper's y=0
+        ghostBox.position.y = 0.5; // bottom at y=0
         const ghost = new THREE.Group();
         ghost.add(ghostBox);
         sceneManager.scene.add(ghost);
         buildMode = { type: structureType, ghost };
         ghostRotation = 0;
 
-        // Async-load the real model for the ghost.
-        const modelMap: Record<string, string> = {
-          wall_stone: '/structures/wall.glb',
-          wall_wood: '/structures/wall-wood.glb',
-          tower: '/structures/tower-square-build-a.glb',
-          barricade: '/structures/fence.glb',
-        };
-        const modelUrl = modelMap[structureType] ?? '/structures/wall.glb';
-        assetLoader.loadGLTF(modelUrl).then((model) => {
+        // Async-load the real model using the shared helper (NO scaling).
+        loadStructureModel(assetLoader, structureType, 0, 0, 0).then((model) => {
           if (buildMode.ghost !== ghost) return;
-          // Scale to same height as actual structure (2.5m).
-          const targetHeight = 2.5;
-          const box = new THREE.Box3().setFromObject(model);
-          const size = new THREE.Vector3();
-          box.getSize(size);
-          if (size.y > 0.001) {
-            model.scale.setScalar(targetHeight / size.y);
-          }
-          // Recompute box after scaling. Center the model inside a wrapper
-          // group so the wrapper's position = world position (mouse point),
-          // and the model inside is offset to center on the wrapper's origin.
-          const box2 = new THREE.Box3().setFromObject(model);
-          const centerX = (box2.min.x + box2.max.x) / 2;
-          const centerZ = (box2.min.z + box2.max.z) / 2;
-          model.position.x = -centerX;
-          model.position.z = -centerZ;
-          model.position.y = -box2.min.y;
 
           // Make it semi-transparent for ghost preview.
           model.traverse((child) => {
@@ -271,24 +305,21 @@ async function main() {
             }
           });
 
-          // Create a wrapper group. The wrapper's position = mouse ground
-          // point (set by updateAimAndBuildGhost). The model inside is
-          // centered on the wrapper's origin. This way, when the wrapper
-          // moves to point.x, the model appears centered at point.x.
-          const wrapper = new THREE.Group();
-          wrapper.position.copy(ghost.position);
-          wrapper.add(model);
+          // The model is already centered at (0,0,0) by loadStructureModel.
+          // Copy the ghost's current position (mouse point) to the model.
+          model.position.x += ghost.position.x;
+          model.position.z += ghost.position.z;
+          model.rotation.y = ghostRotation;
 
-          // Clean up old ghost (box mesh inside the group).
+          // Clean up old ghost box.
           sceneManager.scene.remove(ghost);
           const oldBox = ghost.children[0] as THREE.Mesh;
           if (oldBox) {
             oldBox.geometry.dispose();
             (oldBox.material as THREE.Material).dispose();
           }
-          sceneManager.scene.add(wrapper);
-          buildMode = { type: structureType, ghost: wrapper };
-          wrapper.rotation.y = ghostRotation;
+          sceneManager.scene.add(model);
+          buildMode = { type: structureType, ghost: model };
         }).catch(() => {
           // Keep the box ghost if model fails to load.
         });
@@ -669,63 +700,32 @@ async function main() {
       }
       knownStructureIds.add(structId);
 
-      // Use a placeholder box initially, then async-load the real GLB model.
+      // Use a placeholder box initially (1m, matching model natural size).
       const factionColor = struct.faction === 'solari' ? 0xe07b3a : 0x4a90e2;
       const placeholder = new THREE.Mesh(
-        new THREE.BoxGeometry(2, 2, 0.5),
+        new THREE.BoxGeometry(1, 1, 0.1),
         new THREE.MeshStandardMaterial({
           color: factionColor,
           transparent: !struct.built,
           opacity: struct.built ? 1.0 : 0.6,
         })
       );
-      // Lift so the bottom sits ON the ground (not half-buried).
-      placeholder.position.set(struct.x, 1, struct.z);
+      placeholder.position.set(struct.x, 0.5, struct.z);
       placeholder.rotation.y = struct.rotation;
       placeholder.castShadow = true;
       placeholder.receiveShadow = true;
       sceneManager.scene.add(placeholder);
       structureMeshes.set(structId, placeholder);
 
-      // Map structure type to GLB model URL.
-      const modelMap: Record<string, string> = {
-        wall_stone: '/structures/wall.glb',
-        wall_wood: '/structures/wall-wood.glb',
-        tower: '/structures/tower-square-build-a.glb',
-        barricade: '/structures/fence.glb',
-      };
-      const modelUrl = modelMap[struct.structureType] ?? '/structures/wall.glb';
-
-      assetLoader.loadGLTF(modelUrl).then((model) => {
-        // Scale to ~2.5m tall.
-        const targetHeight = 2.5;
-        const box = new THREE.Box3().setFromObject(model);
-        const size = new THREE.Vector3();
-        box.getSize(size);
-        if (size.y > 0.001) {
-          model.scale.setScalar(targetHeight / size.y);
-        }
-        // Recompute box after scaling. Center the model on origin (X/Z)
-        // and lift so feet are at y=0. Compute center BEFORE applying
-        // rotation so the offset is correct regardless of rotation.
-        const box2 = new THREE.Box3().setFromObject(model);
-        const centerX = (box2.min.x + box2.max.x) / 2;
-        const centerZ = (box2.min.z + box2.max.z) / 2;
-        model.position.x = struct.x - centerX;
-        model.position.z = struct.z - centerZ;
-        model.position.y = -box2.min.y;
-        model.rotation.y = struct.rotation;
-
-        // CLONE materials for this instance. The GLB cache shares materials
-        // across all instances — if we change opacity on one, it affects ALL.
-        // Cloning ensures each structure has its own material instance.
+      // Use loadStructureModel helper — NO scaling, proper centering.
+      loadStructureModel(assetLoader, struct.structureType, struct.x, struct.z, struct.rotation).then((model) => {
+        // Set opacity based on built state.
         model.traverse((child) => {
           const m = child as THREE.Mesh;
           if (m.material) {
             const mats = Array.isArray(m.material) ? m.material : [m.material];
-            const newMats = mats.map(mat => {
-              const sm = (mat as THREE.MeshStandardMaterial).clone();
-              sm.side = THREE.DoubleSide;
+            for (const mat of mats) {
+              const sm = mat as THREE.MeshStandardMaterial;
               if (struct.built) {
                 sm.transparent = false;
                 sm.opacity = 1.0;
@@ -734,9 +734,7 @@ async function main() {
                 sm.opacity = 0.6;
               }
               sm.needsUpdate = true;
-              return sm;
-            });
-            m.material = Array.isArray(m.material) ? newMats : newMats[0];
+            }
           }
         });
 
@@ -747,7 +745,7 @@ async function main() {
         sceneManager.scene.add(model);
         structureMeshes.set(structId, model);
       }).catch((err) => {
-        console.warn(`[Client] Failed to load structure model ${modelUrl}:`, err);
+        console.warn(`[Client] Failed to load structure model:`, err);
       });
     });
   }
