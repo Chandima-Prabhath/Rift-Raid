@@ -83,11 +83,23 @@ export class MovementSystem implements System {
       // Base speed depends on class.
       const baseSpeed = CLASS_STATS[player.characterClass as CharacterClass]?.moveSpeed ?? PLAYER_DEFAULTS.moveSpeed;
       const sprintMult = input.sprintHeld ? PLAYER_DEFAULTS.sprintMultiplier : 1;
-      const speed = baseSpeed * sprintMult;
+      const targetSpeed = baseSpeed * sprintMult;
 
-      // Apply camera-relative movement.
-      velocity.x = worldMoveX * speed;
-      velocity.z = worldMoveZ * speed;
+      // Target velocity (where we want to be).
+      const targetVX = worldMoveX * targetSpeed;
+      const targetVZ = worldMoveZ * targetSpeed;
+
+      // Smooth acceleration/deceleration (lerp toward target velocity).
+      // Higher lerp factor = snappier. 12 = fast but smooth.
+      const accel = 1 - Math.exp(-12 * dt);
+      velocity.x += (targetVX - velocity.x) * accel;
+      velocity.z += (targetVZ - velocity.z) * accel;
+
+      // Dead-zone: if velocity is very small, snap to zero (prevents drift).
+      if (Math.hypot(velocity.x, velocity.z) < 0.05) {
+        velocity.x = 0;
+        velocity.z = 0;
+      }
 
       transform.x += velocity.x * dt;
       transform.z += velocity.z * dt;

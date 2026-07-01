@@ -190,15 +190,18 @@ async function main() {
       if (structureType) {
         // Create a semi-transparent ghost preview. Start with a box,
         // then async-load the real model and swap it in.
-        const ghostGeo = new THREE.BoxGeometry(2, 2, 0.5);
+        // Box is 2.5m tall (matches structure target height), centered at y=1.25
+        // so the bottom sits on the ground (y=0).
+        const GHOST_HEIGHT = 2.5;
+        const ghostGeo = new THREE.BoxGeometry(2, GHOST_HEIGHT, 0.5);
         const ghostMat = new THREE.MeshBasicMaterial({
           color: 0x4a90e2,
           transparent: true,
-          opacity: 0.4,
+          opacity: 0.35,
           depthWrite: false,
         });
         const ghost = new THREE.Mesh(ghostGeo, ghostMat);
-        ghost.position.y = 1;
+        ghost.position.y = GHOST_HEIGHT / 2; // bottom at y=0
         sceneManager.scene.add(ghost);
         buildMode = { type: structureType, ghost };
         ghostRotation = 0;
@@ -212,8 +215,8 @@ async function main() {
         };
         const modelUrl = modelMap[structureType] ?? '/structures/wall.glb';
         assetLoader.loadGLTF(modelUrl).then((model) => {
-          // Only swap if this ghost is still the active one.
           if (buildMode.ghost !== ghost) return;
+          // Scale to same height as actual structure (2.5m).
           const targetHeight = 2.5;
           const box = new THREE.Box3().setFromObject(model);
           const size = new THREE.Vector3();
@@ -221,6 +224,7 @@ async function main() {
           if (size.y > 0.001) {
             model.scale.setScalar(targetHeight / size.y);
           }
+          // Position so bottom is at y=0 (same as actual structure placement).
           const box2 = new THREE.Box3().setFromObject(model);
           model.position.y = -box2.min.y;
 
@@ -597,7 +601,24 @@ async function main() {
         if (mesh) {
           mesh.visible = struct.hp > 0;
           // Scale Y by build progress (grows from ground).
-          mesh.scale.y = Math.max(0.1, struct.buildProgress);
+          mesh.scale.y = Math.max(0.05, struct.buildProgress);
+          // Update opacity: transparent while building, opaque when built.
+          mesh.traverse((child) => {
+            const m = child as THREE.Mesh;
+            if (m.material) {
+              const mats = Array.isArray(m.material) ? m.material : [m.material];
+              for (const mat of mats) {
+                const sm = mat as THREE.MeshStandardMaterial;
+                if (struct.built) {
+                  sm.transparent = false;
+                  sm.opacity = 1.0;
+                } else {
+                  sm.transparent = true;
+                  sm.opacity = 0.6;
+                }
+              }
+            }
+          });
         }
         return;
       }
@@ -613,11 +634,12 @@ async function main() {
           opacity: struct.built ? 1.0 : 0.6,
         })
       );
+      // Lift so the bottom sits ON the ground (not half-buried).
       placeholder.position.set(struct.x, 1, struct.z);
       placeholder.rotation.y = struct.rotation;
       placeholder.castShadow = true;
       placeholder.receiveShadow = true;
-      placeholder.scale.y = Math.max(0.1, struct.buildProgress);
+      placeholder.scale.y = Math.max(0.05, struct.buildProgress);
       sceneManager.scene.add(placeholder);
       structureMeshes.set(structId, placeholder);
 
@@ -639,11 +661,32 @@ async function main() {
         if (size.y > 0.001) {
           model.scale.setScalar(targetHeight / size.y);
         }
+        // Recompute box after scaling, then position so feet are at y=0
+        // (on the ground, not buried).
         const box2 = new THREE.Box3().setFromObject(model);
         model.position.x = struct.x - (box2.min.x + box2.max.x) / 2;
         model.position.z = struct.z - (box2.min.z + box2.max.z) / 2;
-        model.position.y = -box2.min.y;
+        model.position.y = -box2.min.y; // lift so bottom is at y=0
         model.rotation.y = struct.rotation;
+
+        // Set initial opacity based on built state.
+        model.traverse((child) => {
+          const m = child as THREE.Mesh;
+          if (m.material) {
+            const mats = Array.isArray(m.material) ? m.material : [m.material];
+            for (const mat of mats) {
+              const sm = mat as THREE.MeshStandardMaterial;
+              if (struct.built) {
+                sm.transparent = false;
+                sm.opacity = 1.0;
+              } else {
+                sm.transparent = true;
+                sm.opacity = 0.6;
+              }
+              sm.needsUpdate = true;
+            }
+          }
+        });
 
         // Remove placeholder and add real model.
         sceneManager.scene.remove(placeholder);
