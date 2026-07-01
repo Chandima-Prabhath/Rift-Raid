@@ -871,25 +871,11 @@ async function main() {
         sys.update(world, dt);
       }
 
-      // Auto-camera follow: only auto-rotate when the player moves FORWARD
-      // (W key). For other directions, keep the camera stable so it doesn't
-      // spin disorientingly. The camera slowly aligns behind the player.
-      const input = inputManager.getState();
-      const moveMag = Math.hypot(input.move.x, input.move.y);
-      // Only auto-follow when moving forward (move.y < -0.3 means W is pressed).
-      if (moveMag > 0.3 && input.move.y < -0.3) {
-        const camYaw = cameraController.yaw;
-        const cosY = Math.cos(-camYaw);
-        const sinY = Math.sin(-camYaw);
-        const worldMoveX = input.move.x * cosY + input.move.y * sinY;
-        const worldMoveZ = -input.move.x * sinY + input.move.y * cosY;
-        const moveAngle = Math.atan2(worldMoveX, worldMoveZ);
-        // Camera should be BEHIND the player, so target yaw = moveAngle + π.
-        cameraController.setAutoFollowYaw(moveAngle + Math.PI);
-      } else {
-        // Player idle or moving sideways/back — don't auto-rotate.
-        cameraController.setAutoFollowYaw(null);
-      }
+      // Auto-camera follow is DISABLED — it caused disorienting rotation
+      // when pressing non-forward keys and created a feedback loop with
+      // camera-relative movement. Players rotate the camera manually
+      // with right-click or middle-click drag.
+      cameraController.setAutoFollowYaw(null);
 
       network.update(dt);
 

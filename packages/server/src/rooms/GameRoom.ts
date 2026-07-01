@@ -662,23 +662,29 @@ export class GameRoom extends Room<GameState> {
       const newX = player.x + input.moveX * moveSpeed * dt;
       const newZ = player.z + input.moveZ * moveSpeed * dt;
 
-      // Structure collision: don't let players walk through built structures.
-      // Each structure has a ~1m radius collision cylinder.
-      let blocked = false;
+      // Structure collision: per-axis check so the player can slide along
+      // walls instead of getting stuck. Try X and Z independently.
+      const COLLISION_RADIUS = 0.8;
+      let canMoveX = true;
+      let canMoveZ = true;
       for (const struct of this.state.structures.values()) {
         if (!struct.built || struct.hp <= 0) continue;
-        const sdx = newX - struct.x;
-        const sdz = newZ - struct.z;
-        if (Math.hypot(sdx, sdz) < 1.2) {
-          blocked = true;
-          break;
+        // Check X movement only.
+        const dxX = newX - struct.x;
+        const dzX = player.z - struct.z;
+        if (Math.hypot(dxX, dzX) < COLLISION_RADIUS) {
+          canMoveX = false;
+        }
+        // Check Z movement only.
+        const dxZ = player.x - struct.x;
+        const dzZ = newZ - struct.z;
+        if (Math.hypot(dxZ, dzZ) < COLLISION_RADIUS) {
+          canMoveZ = false;
         }
       }
 
-      if (!blocked) {
-        player.x = newX;
-        player.z = newZ;
-      }
+      if (canMoveX) player.x = newX;
+      if (canMoveZ) player.z = newZ;
       this.clampPosition(player);
 
       // Facing: character faces MOVEMENT direction (not aim point).

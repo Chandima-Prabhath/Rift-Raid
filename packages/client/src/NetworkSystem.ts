@@ -460,11 +460,36 @@ export class NetworkSystem {
     const health = this.world.getComponent(entity, HealthComponent);
     const playerComp = this.world.getComponent(entity, PlayerComponent);
 
-    if (transform) {
+    // For the LOCAL player, DON'T overwrite position from server.
+    // The client does its own movement prediction (MovementSystem), and
+    // server position patches would cause snap-back stutter. Only update
+    // HP, inventory, and class — NOT position.
+    // For REMOTE players, sync position from server (they have no local prediction).
+    const isLocal = this.localSessionId !== null && entity === this.entityBySessionId.get(this.localSessionId);
+
+    if (transform && !isLocal) {
       transform.x = player.x;
       transform.y = player.y;
       transform.z = player.z;
       transform.rotation = player.rotation;
+    } else if (transform && isLocal) {
+      // Gentle reconciliation: if the client has drifted too far from the
+      // server position (e.g., due to collision correction), snap back.
+      // This prevents the player from walking through walls on their screen
+      // while the server blocks them.
+      const dx = player.x - transform.x;
+      const dz = player.z - transform.z;
+      const dist = Math.hypot(dx, dz);
+      if (dist > 2.0) {
+        // Large discrepancy — snap to server position.
+        transform.x = player.x;
+        transform.z = player.z;
+      } else if (dist > 0.1) {
+        // Small discrepancy — lerp toward server position gently.
+        const lerp = 0.1;
+        transform.x += dx * lerp;
+        transform.z += dz * lerp;
+      }
     }
     if (health) {
       health.current = player.hp;
