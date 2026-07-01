@@ -1,13 +1,12 @@
 /**
  * Rift & Raid — HUD
  *
- * In-canvas HUD overlay. Shows:
- *   - Debug stats (top-left, below debug overlay)
- *   - HP bar (bottom-left)
- *   - Personal inventory (left side, above HP)
- *   - Team vault resources (left side, below debug)
- *
- * DOM overlay — cheaper than Three.js sprites for text.
+ * Game-like HUD overlay with:
+ *   - Bottom-left: HP bar + personal inventory
+ *   - Top-left: Team vault resources
+ *   - Bottom-center: controls hint (auto-hides after 10s)
+ *   - Top-center: faction indicator
+ *   - All styled with glassmorphism + faction colors
  */
 
 export interface HudStats {
@@ -23,12 +22,15 @@ export interface HudStats {
 
 export class HUD {
   private container: HTMLDivElement;
-  private debug: HTMLDivElement;
-  private health: HTMLDivElement;
-  private resources: HTMLDivElement;
+  private healthBar: HTMLDivElement;
+  private healthFill: HTMLDivElement;
+  private healthText: HTMLDivElement;
+  private inventory: HTMLDivElement;
   private vault: HTMLDivElement;
+  private factionBanner: HTMLDivElement;
   private controls: HTMLDivElement;
   private stats: HudStats = {};
+  private controlsTimer = 0;
 
   constructor() {
     this.container = document.createElement('div');
@@ -42,100 +44,109 @@ export class HUD {
     `;
     document.body.appendChild(this.container);
 
-    // Debug stats (top-left).
-    this.debug = document.createElement('div');
-    this.debug.style.cssText = `
+    // ── Faction banner (top-center) ──
+    this.factionBanner = document.createElement('div');
+    this.factionBanner.style.cssText = `
       position: absolute;
-      top: 8px; left: 8px;
-      background: rgba(0,0,0,0.5);
-      padding: 6px 10px;
-      border-radius: 4px;
-      font-size: 12px;
-      line-height: 1.5;
-      font-family: monospace;
+      top: 12px; left: 50%;
+      transform: translateX(-50%);
+      padding: 6px 20px;
+      border-radius: 20px;
+      font-size: 13px;
+      font-weight: 800;
+      letter-spacing: 0.15em;
+      text-transform: uppercase;
       display: none;
     `;
-    this.container.appendChild(this.debug);
+    this.container.appendChild(this.factionBanner);
 
-    // Team vault resources (top-left, below debug).
+    // ── Team vault (top-left) ──
     this.vault = document.createElement('div');
     this.vault.style.cssText = `
       position: absolute;
-      top: 8px; left: 8px;
-      background: rgba(0,0,0,0.6);
-      padding: 8px 12px;
-      border-radius: 4px;
-      font-size: 13px;
-      line-height: 1.6;
-      min-width: 140px;
-      border: 1px solid rgba(255,255,255,0.15);
+      top: 12px; left: 12px;
+      background: rgba(10, 14, 24, 0.8);
+      padding: 10px 14px;
+      border-radius: 8px;
+      font-size: 12px;
+      line-height: 1.7;
+      min-width: 130px;
+      border: 1px solid rgba(255,255,255,0.08);
+      backdrop-filter: blur(8px);
     `;
     this.container.appendChild(this.vault);
 
-    // Personal inventory (bottom-left, above HP).
-    this.resources = document.createElement('div');
-    this.resources.style.cssText = `
-      position: absolute;
-      bottom: 60px; left: 20px;
-      background: rgba(0,0,0,0.6);
-      padding: 6px 10px;
-      border-radius: 4px;
-      font-size: 12px;
-      line-height: 1.5;
-      min-width: 120px;
-      border: 1px solid rgba(255,255,255,0.15);
-    `;
-    this.container.appendChild(this.resources);
+    // ── HP bar + inventory (bottom-left) ──
+    const bottomLeft = document.createElement('div');
+    bottomLeft.style.cssText = `position: absolute; bottom: 16px; left: 16px; display: flex; flex-direction: column; gap: 8px;`;
 
-    // HP bar (bottom-left).
-    this.health = document.createElement('div');
-    this.health.style.cssText = `
-      position: absolute;
-      bottom: 20px; left: 20px;
-      width: 240px;
-      height: 28px;
-      background: rgba(0,0,0,0.5);
-      border: 2px solid rgba(255,255,255,0.3);
-      border-radius: 4px;
-      overflow: hidden;
+    // Inventory
+    this.inventory = document.createElement('div');
+    this.inventory.style.cssText = `
+      background: rgba(10, 14, 24, 0.8);
+      padding: 6px 12px;
+      border-radius: 8px;
+      font-size: 12px;
+      line-height: 1.6;
+      min-width: 140px;
+      border: 1px solid rgba(255,255,255,0.08);
+      backdrop-filter: blur(8px);
     `;
-    const healthFill = document.createElement('div');
-    healthFill.id = 'rr-health-fill';
-    healthFill.style.cssText = `
+    bottomLeft.appendChild(this.inventory);
+
+    // HP bar
+    this.healthBar = document.createElement('div');
+    this.healthBar.style.cssText = `
+      width: 220px;
+      height: 26px;
+      background: rgba(10, 14, 24, 0.8);
+      border: 2px solid rgba(255,255,255,0.15);
+      border-radius: 6px;
+      overflow: hidden;
+      position: relative;
+      backdrop-filter: blur(8px);
+    `;
+    this.healthFill = document.createElement('div');
+    this.healthFill.style.cssText = `
       width: 100%;
       height: 100%;
-      background: linear-gradient(90deg, #e44, #c33);
-      transition: width 0.15s ease-out;
+      background: linear-gradient(90deg, #c0392b, #e74c3c);
+      transition: width 0.2s ease-out;
     `;
-    this.health.appendChild(healthFill);
-    this.health.appendChild(this.makeTextSpan('HP', 'bottom: 6px; left: 10px; font-size: 12px;'));
-    this.container.appendChild(this.health);
+    this.healthBar.appendChild(this.healthFill);
+    this.healthText = document.createElement('div');
+    this.healthText.style.cssText = `
+      position: absolute;
+      top: 50%; left: 50%;
+      transform: translate(-50%, -50%);
+      font-size: 12px;
+      font-weight: 700;
+      text-shadow: 0 1px 3px rgba(0,0,0,0.8);
+    `;
+    this.healthBar.appendChild(this.healthText);
+    bottomLeft.appendChild(this.healthBar);
 
-    // Controls hint (bottom-center) — two lines for readability.
+    this.container.appendChild(bottomLeft);
+
+    // ── Controls hint (bottom-center, auto-hide) ──
     this.controls = document.createElement('div');
     this.controls.style.cssText = `
       position: absolute;
-      bottom: 8px; left: 50%;
+      bottom: 10px; left: 50%;
       transform: translateX(-50%);
       font-size: 11px;
-      color: rgba(255,255,255,0.45);
+      color: rgba(255,255,255,0.4);
       font-family: monospace;
-      white-space: nowrap;
       text-align: center;
-      line-height: 1.6;
+      line-height: 1.7;
+      transition: opacity 0.5s;
     `;
     this.controls.innerHTML = [
-      '<b style="color:rgba(255,255,255,0.7)">WASD</b> move · <b style="color:rgba(255,255,255,0.7)">Mouse</b> aim · <b style="color:rgba(255,255,255,0.7)">L-Click</b> attack · <b style="color:rgba(255,255,255,0.7)">Q</b> ability · <b style="color:rgba(255,255,255,0.7)">Space</b> dash',
-      '<b style="color:rgba(255,255,255,0.7)">E</b> interact · <b style="color:rgba(255,255,255,0.7)">B</b> build · <b style="color:rgba(255,255,255,0.7)">R</b> rotate ghost · <b style="color:rgba(255,255,255,0.7)">R-Click/Middle</b> camera · <b style="color:rgba(255,255,255,0.7)">Wheel</b> zoom · <b style="color:rgba(255,255,255,0.7)">F3</b> debug',
+      '<b style="color:rgba(255,255,255,0.65)">WASD</b> move · <b style="color:rgba(255,255,255,0.65)">L-Click</b> attack · <b style="color:rgba(255,255,255,0.65)">Q</b> ability · <b style="color:rgba(255,255,255,0.65)">Space</b> dash',
+      '<b style="color:rgba(255,255,255,0.65)">E</b> interact · <b style="color:rgba(255,255,255,0.65)">B</b> build · <b style="color:rgba(255,255,255,0.65)">R</b> rotate · <b style="color:rgba(255,255,255,0.65)">R-Click</b> camera · <b style="color:rgba(255,255,255,0.65)">Wheel</b> zoom',
     ].join('<br>');
     this.container.appendChild(this.controls);
-  }
-
-  private makeTextSpan(text: string, extraCss = ''): HTMLSpanElement {
-    const span = document.createElement('span');
-    span.textContent = text;
-    span.style.cssText = `position: absolute; ${extraCss}`;
-    return span;
+    this.controlsTimer = 10;
   }
 
   setStats(stats: HudStats): void {
@@ -143,35 +154,57 @@ export class HUD {
     this.render();
   }
 
+  /** Called every frame to auto-hide controls hint. */
+  tick(dt: number): void {
+    if (this.controlsTimer > 0) {
+      this.controlsTimer -= dt;
+      if (this.controlsTimer <= 0) {
+        this.controls.style.opacity = '0';
+      }
+    }
+  }
+
   private render(): void {
     const s = this.stats;
 
-    const fill = document.getElementById('rr-health-fill');
-    if (fill && s.playerHp !== undefined && s.playerMaxHp !== undefined) {
+    // HP bar
+    if (s.playerHp !== undefined && s.playerMaxHp !== undefined) {
       const pct = Math.max(0, Math.min(100, (s.playerHp / s.playerMaxHp) * 100));
-      fill.style.width = `${pct}%`;
+      this.healthFill.style.width = `${pct}%`;
+      this.healthText.textContent = `${Math.round(s.playerHp)} / ${s.playerMaxHp}`;
+      // Color shifts from green → yellow → red as HP drops.
+      if (pct > 50) {
+        this.healthFill.style.background = 'linear-gradient(90deg, #27ae60, #2ecc71)';
+      } else if (pct > 25) {
+        this.healthFill.style.background = 'linear-gradient(90deg, #e67e22, #f39c12)';
+      } else {
+        this.healthFill.style.background = 'linear-gradient(90deg, #c0392b, #e74c3c)';
+      }
     }
 
-    // Personal inventory.
+    // Inventory
     if (s.playerResources) {
-      this.resources.innerHTML = [
-        `<div style="font-size:10px;color:#889;margin-bottom:2px;">CARRYING</div>`,
-        `<span style="color:#a0a0b0">Iron:</span> ${s.playerResources.iron}`,
-        `<span style="color:#a08060">Wood:</span> ${s.playerResources.emberwood}`,
-        `<span style="color:#b080ff">Godshard:</span> ${s.playerResources.godshard}`,
-      ].join('<br>');
+      this.inventory.innerHTML = `
+        <div style="font-size:9px;color:#678;letter-spacing:0.1em;font-weight:700;">CARRYING</div>
+        <div><span style="color:#a0a0b0">⚔</span> ${s.playerResources.iron} <span style="color:#678">·</span> <span style="color:#a08060">🪵</span> ${s.playerResources.emberwood} <span style="color:#678">·</span> <span style="color:#b080ff">💎</span> ${s.playerResources.godshard}</div>
+      `;
     }
 
-    // Team vault.
+    // Vault
     if (s.vaultResources) {
-      const factionLabel = s.faction === 'solari' ? 'SOLARI VAULT' : 'LUNARI VAULT';
-      const factionColor = s.faction === 'solari' ? '#e07b3a' : '#4a90e2';
-      this.vault.innerHTML = [
-        `<div style="font-size:10px;color:${factionColor};margin-bottom:2px;font-weight:700;">${factionLabel}</div>`,
-        `<span style="color:#a0a0b0">Iron:</span> ${s.vaultResources.iron}`,
-        `<span style="color:#a08060">Wood:</span> ${s.vaultResources.emberwood}`,
-        `<span style="color:#b080ff">Godshard:</span> ${s.vaultResources.godshard}`,
-      ].join('<br>');
+      const isSolari = s.faction === 'solari';
+      const color = isSolari ? '#e07b3a' : '#4a90e2';
+      this.vault.innerHTML = `
+        <div style="font-size:9px;color:${color};letter-spacing:0.1em;font-weight:700;margin-bottom:3px;">${isSolari ? 'SOLARI' : 'LUNARI'} VAULT</div>
+        <div><span style="color:#a0a0b0">⚔</span> ${s.vaultResources.iron}</div>
+        <div><span style="color:#a08060">🪵</span> ${s.vaultResources.emberwood}</div>
+        <div><span style="color:#b080ff">💎</span> ${s.vaultResources.godshard}</div>
+      `;
+      this.factionBanner.style.display = 'block';
+      this.factionBanner.style.background = isSolari ? 'rgba(224,123,58,0.2)' : 'rgba(74,144,226,0.2)';
+      this.factionBanner.style.border = `1px solid ${color}`;
+      this.factionBanner.style.color = color;
+      this.factionBanner.textContent = isSolari ? '⚔ SOLARI' : '🌙 LUNARI';
     }
   }
 

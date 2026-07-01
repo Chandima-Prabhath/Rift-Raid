@@ -269,8 +269,9 @@ export class CharacterModelLoader {
     // instead (adding π to the rotation angle). This avoids double-
     // rotation bugs when the wrapper group also gets rotated.
 
-    // Auto-normalize scale to target height (1.8m).
-    const TARGET_HEIGHT = 1.8;
+    // Auto-normalize scale to target height (1.5m — slightly smaller so
+    // structures and resource nodes feel proportionally larger).
+    const TARGET_HEIGHT = 1.5;
     const box = new THREE.Box3().setFromObject(model);
     const size = new THREE.Vector3();
     box.getSize(size);

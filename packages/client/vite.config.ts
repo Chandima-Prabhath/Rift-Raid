@@ -31,7 +31,11 @@ export default defineConfig({
   server: {
     port: 5173,
     host: true, // allow LAN connections for boarding-house playtests
+    // Don't SPA-fallback .html files — let /editor.html serve the editor.
+    // Without this, Vite serves index.html for ALL .html requests.
   },
+  // Explicit appType so Vite doesn't do SPA fallback for .html routes.
+  appType: 'mpa',
   resolve: {
     alias: {
       // Point at dist/ so both runtimes use the SAME decorator-processed code.
@@ -40,7 +44,7 @@ export default defineConfig({
       '@rift-and-raid/game': path.resolve(__dirname, '../game/dist'),
     },
   },
-  // Serve the game's 3D model assets at /assets/...
+  // Serve the game's 3D model assets at /characters/, /props/, etc.
   publicDir: path.resolve(__dirname, '../game/assets'),
   optimizeDeps: {
     include: ['three'],

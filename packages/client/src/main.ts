@@ -877,6 +877,7 @@ async function main() {
       updateMinimap();
       debugOverlay.update();
       buildMenu.refresh();
+      hud.tick(dt);
 
       world.clearDirtyFlag();
       eventBus.emit(Events.WORLD_TICK, { dt });

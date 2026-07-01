@@ -123,16 +123,15 @@ export class SceneManager {
   //   - Mouse wheel → zoom
   //   - Touch: two-finger drag → orbit, pinch → zoom
   //
-  // Design principles:
-  //   - Horizontal drag rotates the world left/right (camera yaws)
-  //   - Vertical drag tilts the view (drag UP = camera looks down more)
-  //   - Smooth lerp on yaw/pitch for momentum feel
+  // Design:
+  //   - Horizontal drag: drag RIGHT → world rotates right (yaw decreases)
+  //   - Vertical drag: drag UP → camera tilts up (pitch decreases, more horizon)
+  //   - This matches natural "grab the world and pull it" intuition.
   // --------------------------------------------------------------------------
 
   private setupCameraControls(): void {
     const el = this.renderer.domElement;
 
-    // Right-click OR middle-click starts camera drag.
     el.addEventListener('mousedown', (e) => {
       if (e.button !== 2 && e.button !== 1) return;
       this.isDragging = true;
@@ -147,20 +146,20 @@ export class SceneManager {
       const dy = e.clientY - this.lastDragY;
       this.lastDragX = e.clientX;
       this.lastDragY = e.clientY;
-      // Horizontal drag → yaw. Vertical drag → pitch.
-      // Drag UP (dy < 0) → pitch increases (camera looks down more) → intuitive.
+      // Drag right → yaw decreases (world rotates right).
+      // Drag up (dy<0) → pitch decreases (camera tilts up toward horizon).
+      // Drag down (dy>0) → pitch increases (camera tilts down, more top-down).
       this.yaw -= dx * CAMERA_CONFIG.yawSpeed;
-      this.pitch = this.clampPitch(this.pitch - dy * CAMERA_CONFIG.pitchSpeed);
+      this.pitch = this.clampPitch(this.pitch + dy * CAMERA_CONFIG.pitchSpeed);
     });
 
     window.addEventListener('mouseup', (e) => {
       if (e.button === 2 || e.button === 1) this.isDragging = false;
     });
 
-    // Prevent context menu on right-click.
     el.addEventListener('contextmenu', (e) => e.preventDefault());
 
-    // Mouse wheel zoom — smooth.
+    // Mouse wheel zoom.
     el.addEventListener('wheel', (e) => {
       e.preventDefault();
       const delta = e.deltaY * 0.01;
@@ -191,7 +190,7 @@ export class SceneManager {
         this.lastDragX = midX;
         this.lastDragY = midY;
         this.yaw -= dx * CAMERA_CONFIG.yawSpeed;
-        this.pitch = this.clampPitch(this.pitch - dy * CAMERA_CONFIG.pitchSpeed);
+        this.pitch = this.clampPitch(this.pitch + dy * CAMERA_CONFIG.pitchSpeed);
 
         // Pinch zoom.
         const currentDist = this.touchDistance(e.touches);

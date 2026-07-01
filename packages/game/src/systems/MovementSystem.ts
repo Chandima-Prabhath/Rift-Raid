@@ -97,12 +97,11 @@ export class MovementSystem implements System {
       transform.z = Math.max(-WORLD_SIZE.depth, Math.min(0, transform.z));
 
       // Facing: character faces movement direction.
-      // Kenney models face -Z by default, so we add π to the rotation
-      // to make them face the movement direction correctly.
-      // atan2(vx, vz) gives angle for +Z forward; +π converts to -Z forward.
+      // Kenney character models face +Z at rotation 0 after SkinnedMesh
+      // conversion. atan2(vx, vz) gives the correct angle for +Z-forward.
       const moveMag = Math.hypot(velocity.x, velocity.z);
       if (moveMag > 0.1) {
-        transform.rotation = Math.atan2(velocity.x, velocity.z) + Math.PI;
+        transform.rotation = Math.atan2(velocity.x, velocity.z);
       }
 
       // Dash (instant burst, on cooldown) — also camera-relative.

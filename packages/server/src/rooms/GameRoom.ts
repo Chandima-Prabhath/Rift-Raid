@@ -682,11 +682,10 @@ export class GameRoom extends Room<GameState> {
       this.clampPosition(player);
 
       // Facing: character faces MOVEMENT direction (not aim point).
-      // Kenney models face -Z by default, so we add π to convert from
-      // +Z-forward atan2 result to -Z-forward model facing.
+      // Model faces +Z at rotation 0, atan2(vx, vz) gives correct angle.
       const moveMag = Math.hypot(input.moveX, input.moveZ);
       if (moveMag > 0.1) {
-        player.rotation = Math.atan2(input.moveX, input.moveZ) + Math.PI;
+        player.rotation = Math.atan2(input.moveX, input.moveZ);
       }
     }
 

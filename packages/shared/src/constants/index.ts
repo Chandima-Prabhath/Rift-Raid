@@ -34,33 +34,29 @@ export const BASE_RADIUS_M = 50; // structures can only be placed within this ra
 // ============================================================================
 
 export const CAMERA_CONFIG = {
-  /**
-   * Pitch angle from horizon (0°) toward straight-down (90°).
-   * 40° = slightly elevated third-person view (like AoV / LoL).
-   * Higher = more top-down. Lower = more horizon.
-   */
-  pitchDeg: 40,
+  /** Pitch from horizon (0°) toward straight-down (90°). 35° = third-person. */
+  pitchDeg: 35,
   /** Distance from camera to player. */
-  distance: 18,
+  distance: 16,
   /** Field of view. */
   fov: 55,
   /** Smoothing factor for follow (0 = instant, 1 = no follow). */
-  followLerp: 0.18,
+  followLerp: 0.2,
   /** Pixel ratio cap (mobile perf). */
   maxPixelRatio: 2,
   /** Min/max zoom (mouse wheel). */
   minDistance: 8,
-  maxDistance: 32,
-  /** Yaw rotation speed (radians per pixel of right-click drag). */
-  yawSpeed: 0.005,
-  /** Pitch adjustment speed (radians per pixel of right-click vertical drag). */
+  maxDistance: 30,
+  /** Yaw rotation speed (radians per pixel of drag). Lower = smoother. */
+  yawSpeed: 0.004,
+  /** Pitch adjustment speed (radians per pixel of vertical drag). */
   pitchSpeed: 0.003,
-  /** Min/max pitch (clamped so you can't go fully top-down or fully horizon). */
-  minPitchDeg: 20,
-  maxPitchDeg: 75,
+  /** Min/max pitch. */
+  minPitchDeg: 15,
+  maxPitchDeg: 70,
   /** Pinch-to-zoom speed factor (mobile). */
   pinchZoomSpeed: 0.01,
-  /** Initial yaw (radians). 0 = looking toward -Z. */
+  /** Initial yaw. 0 = behind player looking toward -Z. */
   initialYaw: 0,
 } as const;
 
