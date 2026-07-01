@@ -121,8 +121,8 @@ export class BuildMenu {
 
     if (this.selected) {
       const hint = document.createElement('div');
-      hint.textContent = `Click on the ground to place. Right-click to cancel.`;
-      hint.style.cssText = `font-size: 11px; color: #4a90e2; margin-top: 8px; text-align: center;`;
+      hint.innerHTML = `<b style="color:#4a90e2">Click</b> to place · <b style="color:#4a90e2">R</b> to rotate · <b style="color:#4a90e2">Esc</b> to cancel`;
+      hint.style.cssText = `font-size: 11px; color: #aab; margin-top: 8px; text-align: center;`;
       this.container.appendChild(hint);
     }
   }

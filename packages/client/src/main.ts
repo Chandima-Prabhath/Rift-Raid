@@ -177,16 +177,65 @@ async function main() {
         buildMode.ghost = null;
       }
       if (structureType) {
-        const geo = new THREE.BoxGeometry(2, 2, 0.3);
-        const mat = new THREE.MeshBasicMaterial({
+        // Create a semi-transparent ghost preview. Start with a box,
+        // then async-load the real model and swap it in.
+        const ghostGeo = new THREE.BoxGeometry(2, 2, 0.5);
+        const ghostMat = new THREE.MeshBasicMaterial({
           color: 0x4a90e2,
           transparent: true,
           opacity: 0.4,
+          depthWrite: false,
         });
-        const ghost = new THREE.Mesh(geo, mat);
+        const ghost = new THREE.Mesh(ghostGeo, ghostMat);
         ghost.position.y = 1;
         sceneManager.scene.add(ghost);
         buildMode = { type: structureType, ghost };
+        ghostRotation = 0;
+
+        // Async-load the real model for the ghost.
+        const modelMap: Record<string, string> = {
+          wall_stone: '/structures/wall.glb',
+          wall_wood: '/structures/wall-wood.glb',
+          tower: '/structures/tower-square-build-a.glb',
+          barricade: '/structures/fence.glb',
+        };
+        const modelUrl = modelMap[structureType] ?? '/structures/wall.glb';
+        assetLoader.loadGLTF(modelUrl).then((model) => {
+          // Only swap if this ghost is still the active one.
+          if (buildMode.ghost !== ghost) return;
+          const targetHeight = 2.5;
+          const box = new THREE.Box3().setFromObject(model);
+          const size = new THREE.Vector3();
+          box.getSize(size);
+          if (size.y > 0.001) {
+            model.scale.setScalar(targetHeight / size.y);
+          }
+          const box2 = new THREE.Box3().setFromObject(model);
+          model.position.y = -box2.min.y;
+
+          // Make it semi-transparent for ghost preview.
+          model.traverse((child) => {
+            const mesh = child as THREE.Mesh;
+            if (mesh.material) {
+              const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+              for (const m of mats) {
+                const mat = m as THREE.MeshStandardMaterial;
+                mat.transparent = true;
+                mat.opacity = 0.5;
+                mat.depthWrite = false;
+              }
+            }
+          });
+
+          sceneManager.scene.remove(ghost);
+          ghost.geometry.dispose();
+          (ghost.material as THREE.Material).dispose();
+          sceneManager.scene.add(model);
+          buildMode = { type: structureType, ghost: model };
+          model.rotation.y = ghostRotation;
+        }).catch(() => {
+          // Keep the box ghost if model fails to load.
+        });
       } else {
         buildMode = { type: '', ghost: null };
       }
@@ -202,10 +251,16 @@ async function main() {
     },
   });
 
-  // B key toggles build menu.
+  // B key toggles build menu. R rotates ghost. Escape cancels.
+  let ghostRotation = 0;
   window.addEventListener('keydown', (e) => {
     if (e.code === 'KeyB') {
       buildMenu.toggle();
+      e.preventDefault();
+    }
+    if (e.code === 'KeyR' && buildMode.ghost) {
+      ghostRotation += Math.PI / 4; // 45° increments
+      buildMode.ghost.rotation.y = ghostRotation;
       e.preventDefault();
     }
     if (e.code === 'Escape' && buildMode.ghost) {
@@ -214,6 +269,7 @@ async function main() {
         sceneManager.scene.remove(buildMode.ghost);
         buildMode = { type: '', ghost: null };
       }
+      ghostRotation = 0;
     }
   });
 
@@ -431,7 +487,7 @@ async function main() {
     if (!buildMode.type) return;
     const point = getGroundPoint();
     if (point) {
-      network.sendBuild(buildMode.type, point.x, point.z, 0);
+      network.sendBuild(buildMode.type, point.x, point.z, ghostRotation);
     }
   });
 
@@ -443,7 +499,6 @@ async function main() {
   function syncResourceNodeMeshes() {
     network.forEachResourceNode((node, nodeId) => {
       if (knownNodeIds.has(nodeId)) {
-        // Update existing mesh.
         const mesh = resourceNodeMeshes.get(nodeId);
         if (mesh) {
           mesh.visible = node.hp > 0;
@@ -451,40 +506,52 @@ async function main() {
         return;
       }
       knownNodeIds.add(nodeId);
-      // Create mesh based on resource type.
-      const color = HARVESTING.nodeColor[node.resourceType as 'iron' | 'emberwood' | 'godshard'] ?? 0x808080;
-      let mesh: THREE.Object3D;
-      if (node.resourceType === 'emberwood') {
-        // Tree: brown trunk + green canopy (cylinder + cone).
-        const group = new THREE.Group();
-        const trunk = new THREE.Mesh(
-          new THREE.CylinderGeometry(0.2, 0.3, 1.5, 6),
-          new THREE.MeshStandardMaterial({ color: 0x6a4a2a })
-        );
-        trunk.position.y = 0.75;
-        trunk.castShadow = true;
-        group.add(trunk);
-        const canopy = new THREE.Mesh(
-          new THREE.ConeGeometry(1.2, 2, 7),
-          new THREE.MeshStandardMaterial({ color: 0x3a6a3a })
-        );
-        canopy.position.y = 2.5;
-        canopy.castShadow = true;
-        group.add(canopy);
-        mesh = group;
-      } else if (node.resourceType === 'iron') {
-        // Iron vein: cluster of gray rocks.
-        mesh = modelRenderer.createCrystal(color, 1.0, 0.6);
-        mesh.position.y = 0.5;
-      } else {
-        // Godshard: purple crystal.
-        mesh = modelRenderer.createCrystal(color, 1.5, 0.5);
-        mesh.position.y = 0.75;
-      }
-      mesh.position.x = node.x;
-      mesh.position.z = node.z;
-      sceneManager.scene.add(mesh);
-      resourceNodeMeshes.set(nodeId, mesh);
+
+      // Use real GLB models for resource nodes. Load async, use primitive
+      // as immediate placeholder so the node is visible while loading.
+      const placeholderColor = HARVESTING.nodeColor[node.resourceType as 'iron' | 'emberwood' | 'godshard'] ?? 0x808080;
+      const placeholder = new THREE.Mesh(
+        new THREE.BoxGeometry(1, 1, 1),
+        new THREE.MeshStandardMaterial({ color: placeholderColor })
+      );
+      placeholder.position.set(node.x, 0.5, node.z);
+      placeholder.castShadow = true;
+      sceneManager.scene.add(placeholder);
+      resourceNodeMeshes.set(nodeId, placeholder);
+
+      // Async-load the real GLB model.
+      const modelUrl = node.resourceType === 'emberwood'
+        ? '/props/detail-tree.glb'
+        : node.resourceType === 'iron'
+        ? '/props/detail-rocks.glb'
+        : '/props/detail-crystal.glb';
+
+      assetLoader.loadGLTF(modelUrl).then((model) => {
+        // Scale to reasonable size (~2m for trees, ~1m for rocks/crystals).
+        const targetHeight = node.resourceType === 'emberwood' ? 3.0 : 1.2;
+        const box = new THREE.Box3().setFromObject(model);
+        const size = new THREE.Vector3();
+        box.getSize(size);
+        if (size.y > 0.001) {
+          model.scale.setScalar(targetHeight / size.y);
+        }
+        // Center and place on ground.
+        const box2 = new THREE.Box3().setFromObject(model);
+        model.position.x -= (box2.min.x + box2.max.x) / 2;
+        model.position.z -= (box2.min.z + box2.max.z) / 2;
+        model.position.y -= box2.min.y;
+        model.position.x += node.x;
+        model.position.z += node.z;
+
+        // Remove placeholder and add real model.
+        sceneManager.scene.remove(placeholder);
+        placeholder.geometry.dispose();
+        (placeholder.material as THREE.Material).dispose();
+        sceneManager.scene.add(model);
+        resourceNodeMeshes.set(nodeId, model);
+      }).catch((err) => {
+        console.warn(`[Client] Failed to load resource model ${modelUrl}:`, err);
+      });
     });
   }
 
@@ -504,35 +571,65 @@ async function main() {
       if (knownStructureIds.has(structId)) {
         const mesh = structureMeshes.get(structId);
         if (mesh) {
-          const progress = struct.buildProgress;
-          mesh.scale.y = Math.max(0.1, progress);
           mesh.visible = struct.hp > 0;
-          // Update opacity based on built state.
-          const mat = (mesh as THREE.Mesh).material as THREE.MeshStandardMaterial;
-          if (mat) {
-            mat.transparent = !struct.built;
-            mat.opacity = struct.built ? 1.0 : 0.6;
-          }
+          // Scale Y by build progress (grows from ground).
+          mesh.scale.y = Math.max(0.1, struct.buildProgress);
         }
         return;
       }
       knownStructureIds.add(structId);
-      // Create a simple colored box for the structure.
+
+      // Use a placeholder box initially, then async-load the real GLB model.
       const factionColor = struct.faction === 'solari' ? 0xe07b3a : 0x4a90e2;
-      const geo = new THREE.BoxGeometry(2, 2, 0.5);
-      const mat = new THREE.MeshStandardMaterial({
-        color: factionColor,
-        transparent: !struct.built,
-        opacity: struct.built ? 1.0 : 0.6,
+      const placeholder = new THREE.Mesh(
+        new THREE.BoxGeometry(2, 2, 0.5),
+        new THREE.MeshStandardMaterial({
+          color: factionColor,
+          transparent: !struct.built,
+          opacity: struct.built ? 1.0 : 0.6,
+        })
+      );
+      placeholder.position.set(struct.x, 1, struct.z);
+      placeholder.rotation.y = struct.rotation;
+      placeholder.castShadow = true;
+      placeholder.receiveShadow = true;
+      placeholder.scale.y = Math.max(0.1, struct.buildProgress);
+      sceneManager.scene.add(placeholder);
+      structureMeshes.set(structId, placeholder);
+
+      // Map structure type to GLB model URL.
+      const modelMap: Record<string, string> = {
+        wall_stone: '/structures/wall.glb',
+        wall_wood: '/structures/wall-wood.glb',
+        tower: '/structures/tower-square-build-a.glb',
+        barricade: '/structures/fence.glb',
+      };
+      const modelUrl = modelMap[struct.structureType] ?? '/structures/wall.glb';
+
+      assetLoader.loadGLTF(modelUrl).then((model) => {
+        // Scale to ~2.5m tall.
+        const targetHeight = 2.5;
+        const box = new THREE.Box3().setFromObject(model);
+        const size = new THREE.Vector3();
+        box.getSize(size);
+        if (size.y > 0.001) {
+          model.scale.setScalar(targetHeight / size.y);
+        }
+        const box2 = new THREE.Box3().setFromObject(model);
+        model.position.x = struct.x - (box2.min.x + box2.max.x) / 2;
+        model.position.z = struct.z - (box2.min.z + box2.max.z) / 2;
+        model.position.y = -box2.min.y;
+        model.rotation.y = struct.rotation;
+
+        // Remove placeholder and add real model.
+        sceneManager.scene.remove(placeholder);
+        placeholder.geometry.dispose();
+        (placeholder.material as THREE.Material).dispose();
+        sceneManager.scene.add(model);
+        structureMeshes.set(structId, model);
+      }).catch((err) => {
+        console.warn(`[Client] Failed to load structure model ${modelUrl}:`, err);
       });
-      const mesh = new THREE.Mesh(geo, mat);
-      mesh.position.set(struct.x, 1, struct.z);
-      mesh.rotation.y = struct.rotation;
-      mesh.castShadow = true;
-      mesh.receiveShadow = true;
-      mesh.scale.y = Math.max(0.1, struct.buildProgress);
-      sceneManager.scene.add(mesh);
-      structureMeshes.set(structId, mesh);
     });
   }
 
@@ -666,15 +763,22 @@ async function main() {
       inputManager.update(dt);
       updateAimAndBuildGhost();
 
-      // Suppress attacks while in build mode (prevents the "orange dot"
-      // damage number / projectile from firing when clicking to place).
+      // Suppress attacks while in build mode — prevents the CombatSystem
+      // from firing projectiles/damage numbers when clicking to place.
       if (buildMode.type) {
         const state = inputManager.getState() as any;
         state.attackPressed = false;
         state.attackHeld = false;
+        state.abilityPressed = false;
       }
 
-      for (const sys of systems) sys.update(world, dt);
+      // Skip combat systems entirely while in build mode.
+      for (const sys of systems) {
+        if (buildMode.type && (sys.id === 'CombatSystem' || sys.id === 'ProjectileSystem')) {
+          continue;
+        }
+        sys.update(world, dt);
+      }
 
       network.update(dt);
 
